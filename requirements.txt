@@ -1,0 +1,21 @@
+# requirements.txt
+langgraph
+langchain
+langchain-community
+groq
+ollama
+faiss-cpu
+chromadb
+sentence-transformers
+ragas
+deepeval
+scikit-learn
+xgboost
+pandas
+numpy
+matplotlib
+datasets          # HuggingFace
+fastapi
+uvicorn
+streamlit
+python-dotenv

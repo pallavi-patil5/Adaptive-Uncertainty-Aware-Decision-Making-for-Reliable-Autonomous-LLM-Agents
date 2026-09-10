@@ -1,0 +1,37 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+*.env
+
+# Data
+data/raw/
+data/processed/
+*.faiss
+*.index
+*.bin
+*.sqlite3
+*.pickle
+
+# Notebooks
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / outputs
+*.log
+results/
