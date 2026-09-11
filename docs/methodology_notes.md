@@ -54,8 +54,8 @@ Before sufficient experimental data exists, use the following proxy estimates:
 | Action | Initial Reliability Proxy |
 |---|---|
 | **Answer** | \((1-U)(1-C)(1-Amb)\) |
-| **Retrieve** | \(1-E_C\) |
-| **Verify** | \(C\) |
+| **Retrieve** | \(U \cdot E_C\) |
+| **Verify** | \(C \cdot E_C\) |
 | **Clarify** | \(Amb\) |
 | **Abstain** | \(U(1-E_C)\) |
 
@@ -71,10 +71,12 @@ Where:
 For Retrieve specifically:
 
 \[
-G_{retrieve}=1-E_C
+R_{retrieve} = U \cdot E_C
 \]
 
-should be interpreted as **potential reliability gain from obtaining additional evidence**, rather than reliability itself.
+This encodes two conditions that must both hold for retrieval to be worthwhile: the model must be uncertain (\(U\) high), and relevant evidence must actually exist in the corpus (\(E_C\) high). When \(E_C = 0\) (empty corpus or no relevant docs found), the retrieve score collapses to 0 and the policy falls through to **Abstain** (\(U \cdot (1 - E_C) = U\)). This is intentional — retrieving from an empty store wastes calls and returns nothing.
+
+Verify is similarly gated by \(E_C\) so it is not triggered when no evidence exists to verify against.
 
 ---
 

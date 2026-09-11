@@ -1,5 +1,6 @@
 # src/signals/evidence_support.py
 import sys, os
+import numpy as np
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from sentence_transformers import CrossEncoder
@@ -7,15 +8,19 @@ from sentence_transformers import CrossEncoder
 _reranker = CrossEncoder("BAAI/bge-reranker-base")
 
 
+def _sigmoid(x: float) -> float:
+    """Normalize raw cross-encoder logit to [0,1]."""
+    return float(1.0 / (1.0 + np.exp(-x)))
+
+
 def evidence_support_score(question: str, answer: str, evidence_text: str) -> float:
     """
     Scores how well `evidence_text` supports `answer` as a response to `question`.
-    Returns a raw cross-encoder score (higher = stronger support). Not bounded to [0,1]
-    by default for bge-reranker-base — see note below on calibration.
+    Returns a sigmoid-normalized score in [0,1] (higher = stronger support).
     """
     pair_input = f"{question} {answer}"
     raw_score = _reranker.predict([(pair_input, evidence_text)])[0]
-    return float(raw_score)
+    return _sigmoid(raw_score)
 
 
 def best_evidence_support(question: str, answer: str, retrieved_docs: list[dict]) -> dict:

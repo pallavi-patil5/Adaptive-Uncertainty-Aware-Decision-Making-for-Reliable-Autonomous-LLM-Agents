@@ -19,10 +19,22 @@ def estimate_reliability(features: dict) -> dict:
     evidence_coverage = features["evidence_coverage"]
 
     return {
+        # High confidence + no contradiction + unambiguous -> answer directly
         "answer": (1 - uncertainty) * (1 - contradiction) * (1 - ambiguity),
-        "retrieve": (1 - evidence_coverage),
-        "verify": contradiction,
+        # Uncertain AND evidence exists in store to fetch -> retrieve is worthwhile.
+        # Edge-case: if evidence_coverage == 0 (empty corpus or no relevant docs),
+        # retrieve score collapses to 0 and the policy falls through to abstain
+        # (uncertainty * 1.0). This is intentional — retrieving from an empty store
+        # wastes calls and returns nothing. If your corpus is populated but coverage
+        # is still 0 for a query, check the relevance_distance_threshold in
+        # evidence_retrieval.py (currently 0.55) — it may be too tight.
+        "retrieve": uncertainty * evidence_coverage,
+        # Evidence contradicts candidate answer -> verify.
+        # Also gated by evidence_coverage so verify isn't triggered when no docs exist.
+        "verify": contradiction * evidence_coverage,
+        # Question is genuinely ambiguous -> clarify
         "clarify": ambiguity,
+        # Uncertain AND no evidence available -> abstain
         "abstain": uncertainty * (1 - evidence_coverage),
     }
 

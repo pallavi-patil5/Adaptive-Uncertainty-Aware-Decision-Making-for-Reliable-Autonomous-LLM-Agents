@@ -1,5 +1,5 @@
 # src/baselines/run_all.py
-import sys, os
+import sys, os, time
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from baselines import normal_llm, standard_rag, self_reflection, fixed_threshold
@@ -30,5 +30,6 @@ if __name__ == "__main__":
         print(f"Question: {q}")
         results = run_all(q)
         for name, r in results.items():
-            print(f"\n[{name}] action={r['action']} llm_calls={r['llm_calls']} retrieval_calls={r['retrieval_calls']}")
-            print(f"  answer: {r['final_answer']}")
+            print(f"\n[{name}] action={r['action']} llm_calls={r['llm_calls']} "
+                  f"retrieval_calls={r['retrieval_calls']} latency={r['latency_s']}s")
+            print(f"  answer: {r['final_answer']}")  

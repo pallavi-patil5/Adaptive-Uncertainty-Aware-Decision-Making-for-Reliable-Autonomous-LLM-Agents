@@ -2,6 +2,7 @@
 
 import sys
 import os
+import time
 from typing import TypedDict, Optional
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -27,6 +28,22 @@ class AgentState(TypedDict):
     decision: Optional[dict]
     result: Optional[dict]
     evidence: Optional[dict]
+    llm_calls: int          # accumulated across all nodes — for Tier 4 efficiency metrics
+    retrieval_calls: int
+    start_time: float       # set at entry via time.monotonic(), used to compute end-to-end latency_s
+
+
+def _elapsed(state: AgentState) -> float:
+    """Monotonic elapsed seconds since start_time, floored at 0.0.
+    start_time must be set in the initial state via time.monotonic().
+    Falls back to 0.0 (not time.monotonic()) so a missing start_time
+    produces an explicit 0.0 rather than a silent near-zero from a
+    same-instant fallback evaluation.
+    """
+    start = state.get("start_time")
+    if start is None:
+        return 0.0
+    return max(0.0, round(time.monotonic() - start, 3))
 
 
 # ---------------------------------------------------------
@@ -34,11 +51,16 @@ class AgentState(TypedDict):
 # ---------------------------------------------------------
 
 def node_extract_features(state: AgentState) -> AgentState:
+    # Stamp start_time here as a safety net — covers callers that forget to set it.
+    # If already set by the caller, preserve it so end-to-end latency includes
+    # any pre-graph overhead the caller wants to measure.
     features = extract_features(state["question"])
-
     return {
         **state,
         "features": features,
+        "start_time": state.get("start_time") or time.monotonic(),
+        "llm_calls": state.get("llm_calls", 0) + 6,
+        "retrieval_calls": state.get("retrieval_calls", 0) + 1,
     }
 
 
@@ -48,7 +70,6 @@ def node_extract_features(state: AgentState) -> AgentState:
 
 def node_decide(state: AgentState) -> AgentState:
     decision = decide_action(state["features"])
-
     return {
         **state,
         "decision": decision,
@@ -60,14 +81,13 @@ def node_decide(state: AgentState) -> AgentState:
 # ---------------------------------------------------------
 
 def node_answer(state: AgentState) -> AgentState:
-    result = action_answer(
-        state["question"],
-        state["features"]["candidate_answer"],
-    )
-
+    result = action_answer(state["question"], state["features"]["candidate_answer"])
     return {
         **state,
-        "result": result,
+        "result": {**result,
+                   "llm_calls": state.get("llm_calls", 0) + result["llm_calls"],
+                   "retrieval_calls": state.get("retrieval_calls", 0) + result["retrieval_calls"],
+                   "latency_s": _elapsed(state)},
     }
 
 
@@ -76,51 +96,79 @@ def node_answer(state: AgentState) -> AgentState:
 # ---------------------------------------------------------
 
 def node_retrieve(state: AgentState) -> AgentState:
-    evidence = retrieval_signals(
-        state["question"],
-        k=3,
-    )
-
+    evidence = retrieval_signals(state["question"], k=3)
     return {
         **state,
         "evidence": evidence,
+        "retrieval_calls": state.get("retrieval_calls", 0) + 1,
     }
 
 
 # ---------------------------------------------------------
-# 5. Verify Retrieved Evidence
+# 5. Post-Retrieve Decision: verify only if contradiction is high
 # ---------------------------------------------------------
 
-def node_verify(state: AgentState) -> AgentState:
-
-    evidence = state.get("evidence")
-
-    if not evidence:
-        # Reached "verify" directly (e.g. triggered by high contradiction_prob)
-        # without passing through the retrieve node first — fetch evidence now.
-        # This keeps the Retrieve -> Verify path efficient (no duplicate query)
-        # while making the direct-Verify path actually have evidence to check against.
-        evidence = retrieval_signals(state["question"], k=3)
-
+def node_post_retrieve_decide(state: AgentState) -> AgentState:
+    """After retrieval, re-evaluate whether verification is actually needed.
+    Avoids unnecessary verify calls when retrieved evidence already clearly supports the answer."""
+    evidence = state["evidence"]
     retrieved_docs = evidence.get("retrieved_docs", [])
 
-    if retrieved_docs:
-        evidence_text = "\n\n".join(
-            doc["text"] for doc in retrieved_docs
-        )
-    else:
-        evidence_text = "No evidence available."
+    if not retrieved_docs:
+        # No evidence retrieved — answer directly with candidate
+        return {**state, "decision": {**state["decision"], "post_retrieve_action": "answer_direct"}}
 
-    result = action_verify(
-        state["question"],
-        state["features"]["candidate_answer"],
-        evidence_text,
-    )
+    # Re-check contradiction signal against freshly retrieved evidence
+    from signals.contradiction import contradiction_score
+    top_doc = retrieved_docs[0]["text"]
+    contra = contradiction_score(top_doc, state["features"]["candidate_answer"])
+    contradiction_prob = contra["contradiction"]
 
+    post_action = "verify" if contradiction_prob > 0.3 else "answer_with_context"
+    return {**state, "decision": {**state["decision"], "post_retrieve_action": post_action,
+                                   "post_retrieve_contradiction": contradiction_prob}}
+
+
+def route_post_retrieve(state: AgentState) -> str:
+    return state["decision"].get("post_retrieve_action", "verify")
+
+
+def node_answer_with_context(state: AgentState) -> AgentState:
+    """Answer using retrieved context without a full verify LLM call."""
+    from llm_client import call_llm
+    evidence = state.get("evidence", {})
+    docs = [d["text"] for d in evidence.get("retrieved_docs", [])]
+    context = "\n\n".join(docs) if docs else ""
+    prompt = f"Context:\n{context}\n\nQuestion: {state['question']}\nAnswer using the context above:"
+    answer = call_llm(prompt, temperature=0.0)
+    return {**state, "result": {
+        "action": "retrieve",
+        "final_answer": answer,
+        "trace": "Retrieved evidence supported candidate answer — answered with context.",
+        "llm_calls": state.get("llm_calls", 0) + 1,
+        "retrieval_calls": state.get("retrieval_calls", 0),
+        "latency_s": _elapsed(state),
+    }}
+
+
+def node_verify(state: AgentState) -> AgentState:
+    extra_retrieval = 0
+    evidence = state.get("evidence")
+    if not evidence:
+        evidence = retrieval_signals(state["question"], k=3)
+        extra_retrieval = 1
+
+    retrieved_docs = evidence.get("retrieved_docs", [])
+    evidence_text = "\n\n".join(doc["text"] for doc in retrieved_docs) if retrieved_docs else "No evidence available."
+
+    result = action_verify(state["question"], state["features"]["candidate_answer"], evidence_text)
     return {
         **state,
         "evidence": evidence,
-        "result": result,
+        "result": {**result,
+                   "llm_calls": state.get("llm_calls", 0) + result["llm_calls"],
+                   "retrieval_calls": state.get("retrieval_calls", 0) + extra_retrieval,
+                   "latency_s": _elapsed(state)},
     }
 
 
@@ -129,13 +177,13 @@ def node_verify(state: AgentState) -> AgentState:
 # ---------------------------------------------------------
 
 def node_clarify(state: AgentState) -> AgentState:
-    result = action_clarify(
-        state["question"]
-    )
-
+    result = action_clarify(state["question"])
     return {
         **state,
-        "result": result,
+        "result": {**result,
+                   "llm_calls": state.get("llm_calls", 0) + result["llm_calls"],
+                   "retrieval_calls": state.get("retrieval_calls", 0),
+                   "latency_s": _elapsed(state)},
     }
 
 
@@ -144,13 +192,13 @@ def node_clarify(state: AgentState) -> AgentState:
 # ---------------------------------------------------------
 
 def node_abstain(state: AgentState) -> AgentState:
-    result = action_abstain(
-        state["question"]
-    )
-
+    result = action_abstain(state["question"])
     return {
         **state,
-        "result": result,
+        "result": {**result,
+                   "llm_calls": state.get("llm_calls", 0),
+                   "retrieval_calls": state.get("retrieval_calls", 0),
+                   "latency_s": _elapsed(state)},
     }
 
 
@@ -170,53 +218,19 @@ def build_graph():
 
     graph = StateGraph(AgentState)
 
-    graph.add_node(
-        "extract_features",
-        node_extract_features,
-    )
+    graph.add_node("extract_features", node_extract_features)
+    graph.add_node("decide", node_decide)
+    graph.add_node("answer", node_answer)
+    graph.add_node("retrieve", node_retrieve)
+    graph.add_node("post_retrieve_decide", node_post_retrieve_decide)
+    graph.add_node("answer_with_context", node_answer_with_context)
+    graph.add_node("verify", node_verify)
+    graph.add_node("clarify", node_clarify)
+    graph.add_node("abstain", node_abstain)
 
-    graph.add_node(
-        "decide",
-        node_decide,
-    )
+    graph.set_entry_point("extract_features")
+    graph.add_edge("extract_features", "decide")
 
-    graph.add_node(
-        "answer",
-        node_answer,
-    )
-
-    graph.add_node(
-        "retrieve",
-        node_retrieve,
-    )
-
-    graph.add_node(
-        "verify",
-        node_verify,
-    )
-
-    graph.add_node(
-        "clarify",
-        node_clarify,
-    )
-
-    graph.add_node(
-        "abstain",
-        node_abstain,
-    )
-
-    # Entry
-    graph.set_entry_point(
-        "extract_features"
-    )
-
-    # Feature extraction -> decision
-    graph.add_edge(
-        "extract_features",
-        "decide",
-    )
-
-    # Adaptive action selection
     graph.add_conditional_edges(
         "decide",
         route_action,
@@ -229,32 +243,22 @@ def build_graph():
         },
     )
 
-    # Retrieved evidence can then be verified.
-    graph.add_edge(
-        "retrieve",
-        "verify",
+    graph.add_edge("retrieve", "post_retrieve_decide")
+    graph.add_conditional_edges(
+        "post_retrieve_decide",
+        route_post_retrieve,
+        {
+            "verify": "verify",
+            "answer_with_context": "answer_with_context",
+            "answer_direct": "answer",
+        },
     )
 
-    # Terminal actions
-    graph.add_edge(
-        "answer",
-        END,
-    )
-
-    graph.add_edge(
-        "verify",
-        END,
-    )
-
-    graph.add_edge(
-        "clarify",
-        END,
-    )
-
-    graph.add_edge(
-        "abstain",
-        END,
-    )
+    graph.add_edge("answer_with_context", END)
+    graph.add_edge("answer", END)
+    graph.add_edge("verify", END)
+    graph.add_edge("clarify", END)
+    graph.add_edge("abstain", END)
 
     return graph.compile()
 
@@ -268,10 +272,10 @@ if __name__ == "__main__":
     app = build_graph()
 
     test_questions = [
-        "What is the capital of France?",
-        "Who was the first person to walk on the Moon?",
-        "What does 'the meeting' refer to, and when is it?",
-        "Is the claim that humans can survive indefinitely without water true?",
+        "What is 15 * 23?",
+        "Is the statement 'the Earth is flat' scientifically supported?",
+        "Who was the president of the country where the 2016 Summer Olympics were held?",
+        "Which university did the scientist who discovered penicillin attend?",
     ]
 
     for question in test_questions:
@@ -282,23 +286,15 @@ if __name__ == "__main__":
             "decision": None,
             "result": None,
             "evidence": None,
+            "llm_calls": 0,
+            "retrieval_calls": 0,
+            "start_time": time.monotonic(),
         }
 
-        final_state = app.invoke(
-            initial_state
-        )
+        final_state = app.invoke(initial_state)
 
         print("\n" + "=" * 70)
         print(f"Question: {question}")
-        print(
-            f"Action: "
-            f"{final_state['decision']['action']}"
-        )
-        print(
-            f"Decision details: "
-            f"{final_state['decision']}"
-        )
-        print(
-            f"Result: "
-            f"{final_state['result']}"
-        )
+        print(f"Action: {final_state['decision']['action']}")
+        print(f"Decision details: {final_state['decision']}")
+        print(f"Result: {final_state['result']}")

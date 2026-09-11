@@ -1,11 +1,12 @@
 # src/baselines/self_reflection.py
-import sys, os
+import sys, os, time
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from baselines.common import CallCounter, make_result
 
 
 def run(question: str) -> dict:
+    t0 = time.monotonic()
     counter = CallCounter()
 
     # Step 1: generate initial answer
@@ -23,15 +24,14 @@ def run(question: str) -> dict:
     )
     raw = counter.call(reflection_prompt, temperature=0.0)
 
-    final_answer = raw
-    if "FINAL_ANSWER:" in raw:
-        final_answer = raw.split("FINAL_ANSWER:")[-1].strip()
+    final_answer = raw.split("FINAL_ANSWER:")[-1].strip() if "FINAL_ANSWER:" in raw else raw
 
     return make_result(
         action="answer",
         final_answer=final_answer,
         trace=f"Self-reflection agent — generated, critiqued, revised. Initial: '{initial_answer}'",
         llm_calls=counter.count,
+        latency_s=max(0.0, round(time.monotonic() - t0, 3)),
         extra={"initial_answer": initial_answer, "raw_reflection": raw},
     )
 

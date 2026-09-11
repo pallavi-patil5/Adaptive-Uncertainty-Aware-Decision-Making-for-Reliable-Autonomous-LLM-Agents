@@ -15,7 +15,7 @@ class CallCounter:
         return call_llm(prompt, **kwargs)
 
 
-def make_result(action: str, final_answer, trace: str, llm_calls: int, retrieval_calls: int = 0, extra: dict | None = None) -> dict:
+def make_result(action: str, final_answer, trace: str, llm_calls: int, retrieval_calls: int = 0, latency_s: float = 0.0, extra: dict | None = None) -> dict:
     """Standard result shape — every baseline AND the Week 4 adaptive agent should produce this shape
     by Week 6, so the evaluation script can treat all 5 systems identically."""
     result = {
@@ -24,6 +24,7 @@ def make_result(action: str, final_answer, trace: str, llm_calls: int, retrieval
         "trace": trace,
         "llm_calls": llm_calls,
         "retrieval_calls": retrieval_calls,
+        "latency_s": latency_s,
     }
     if extra:
         result.update(extra)
