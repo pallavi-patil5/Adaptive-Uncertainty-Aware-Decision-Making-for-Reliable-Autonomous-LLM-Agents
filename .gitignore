@@ -20,6 +20,7 @@ data/processed/
 *.bin
 *.sqlite3
 *.pickle
+chroma_db/
 
 # Notebooks
 .ipynb_checkpoints/
