@@ -24,17 +24,23 @@ def extract_features(question: str, n_consistency_samples: int = 3) -> dict:
     unc = uncertainty_score(question, n_samples=n_consistency_samples)
 
     # Week 3 signals
+    
+
+    RELEVANCE_DISTANCE_THRESHOLD = 0.55  # calibrated in Week 4 Step 0 against real indexed evidence
+
     ret = retrieval_signals(question, k=3)
     evidence_coverage = ret["evidence_coverage"]
     top1_distance = ret["top1_distance"] if ret["top1_distance"] is not None else 1.0
 
+    evidence_relevant = False
     support_score = None
     contradiction_probs = {"contradiction": 0.0, "entailment": 0.0, "neutral": 1.0}
-    if ret["retrieved_docs"]:
+    if ret["retrieved_docs"] and top1_distance < RELEVANCE_DISTANCE_THRESHOLD:
+        evidence_relevant = True
         top_doc_text = ret["retrieved_docs"][0]["text"]
         support_score = evidence_support_score(question, answer, top_doc_text)
         contradiction_probs = contradiction_score(top_doc_text, answer)
-
+    
     amb = ambiguity_score(question)
     comp = complexity_score(question)
 
@@ -48,6 +54,7 @@ def extract_features(question: str, n_consistency_samples: int = 3) -> dict:
 
         "evidence_coverage": evidence_coverage,
         "top1_distance": top1_distance,
+        "evidence_relevant": evidence_relevant,
         "support_score": support_score if support_score is not None else 0.0,
 
         "contradiction_prob": contradiction_probs["contradiction"],

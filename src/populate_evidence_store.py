@@ -51,4 +51,5 @@ def populate(path="data/processed/unified_dataset.jsonl", batch_size=100):
 
 
 if __name__ == "__main__":
-    populate()
+    populate("data/processed/unified_dataset.jsonl")
+    populate("data/processed/custom_decision_dataset.jsonl")

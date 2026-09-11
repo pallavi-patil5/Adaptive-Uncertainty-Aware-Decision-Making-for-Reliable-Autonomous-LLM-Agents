@@ -131,7 +131,7 @@ custom_examples = [
         "answerable": True,
         "ambiguity": False,
         "evidence_available": True,
-        "evidence": [],
+        "evidence": [{"source": "News report on 2025 Nobel Physics Prize announcement"}],
 
         "requires_retrieval": True,
         "requires_multi_hop": False,
@@ -154,7 +154,7 @@ custom_examples = [
         "answerable": True,
         "ambiguity": False,
         "evidence_available": True,
-        "evidence": [],
+        "evidence": [{"source": "Live commodity price feed for gold rates in India"}],
 
         "requires_retrieval": True,
         "requires_multi_hop": False,
@@ -284,7 +284,7 @@ custom_examples = [
         "answerable": True,
         "ambiguity": False,
         "evidence_available": True,
-        "evidence": [],
+        "evidence": [{"source": "Medical/physiological fact: humans typically survive only 3-4 days without water"}],
 
         "requires_retrieval": True,
         "requires_multi_hop": False,
@@ -307,7 +307,7 @@ custom_examples = [
         "answerable": True,
         "ambiguity": False,
         "evidence_available": True,
-        "evidence": [],
+        "evidence": [{"source": "Scientific consensus: Earth's spherical shape is confirmed by satellite imagery, gravity measurements, and centuries of physical evidence"}],
 
         "requires_retrieval": True,
         "requires_multi_hop": False,
@@ -404,7 +404,7 @@ custom_examples = [
         "answerable": True,
         "ambiguity": False,
         "evidence_available": True,
-        "evidence": [],
+        "evidence": [{"source": "2016 Summer Olympics held in Rio de Janeiro, Brazil; Michel Temer was president at the time"}],
 
         "requires_retrieval": True,
         "requires_multi_hop": True,
@@ -427,7 +427,7 @@ custom_examples = [
         "answerable": True,
         "ambiguity": False,
         "evidence_available": True,
-        "evidence": [],
+        "evidence": [{"source": "Alexander Fleming discovered penicillin; he studied medicine at St Mary's Hospital Medical School, part of the University of London"}],
 
         "requires_retrieval": True,
         "requires_multi_hop": True,

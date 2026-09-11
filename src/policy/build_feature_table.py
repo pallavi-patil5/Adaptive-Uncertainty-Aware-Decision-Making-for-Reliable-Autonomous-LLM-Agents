@@ -18,13 +18,15 @@ def build_table(path=INPUT_PATH, out_path=OUTPUT_PATH):
     rows = []
 
     with open(path, encoding="utf-8") as f:
-        for line in f:
+        lines = [l for l in f if l.strip()]
+
+    for i, line in enumerate(lines, 1):
             record = json.loads(line)
 
             question = record["question"]
 
             print(
-                f"Extracting features for: "
+                f"[{i}/{len(lines)}] Extracting features for: "
                 f"{question[:60]}..."
             )
 
