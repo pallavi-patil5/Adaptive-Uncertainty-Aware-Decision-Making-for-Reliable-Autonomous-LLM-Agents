@@ -57,6 +57,23 @@ def decide_action(features: dict, lam: float = LAMBDA) -> dict:
         "reliability": reliability,
     }
 
+# src/policy/decision_policy.py — add this to estimate_reliability()
+def estimate_reliability(features: dict) -> dict:
+    uncertainty = features["uncertainty"]
+    contradiction = features["contradiction_prob"]
+    ambiguity = features["ambiguity"]
+    evidence_coverage = features["evidence_coverage"]
+    complexity = features.get("complexity", 0.0)  # NEW
+
+    return {
+        # High confidence + no contradiction + unambiguous + not too complex -> answer directly
+        "answer": (1 - uncertainty) * (1 - contradiction) * (1 - ambiguity) * (1 - 0.3 * complexity),
+        "retrieve": uncertainty * evidence_coverage,
+        "verify": contradiction * evidence_coverage,
+        "clarify": ambiguity,
+        "abstain": uncertainty * (1 - evidence_coverage),
+    }
+
 
 if __name__ == "__main__":
     import sys, os
