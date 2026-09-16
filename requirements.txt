@@ -19,3 +19,5 @@ fastapi
 uvicorn
 streamlit
 python-dotenv
+ragas 
+deepval

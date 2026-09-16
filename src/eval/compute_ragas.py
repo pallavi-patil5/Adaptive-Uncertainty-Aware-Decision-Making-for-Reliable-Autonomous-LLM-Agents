@@ -1,7 +1,6 @@
 # src/eval/compute_ragas.py
-# RAGAS evaluation — Faithfulness + Answer Relevancy
-# Only runs on rows where evidence was retrieved (retrieve / verify actions)
-# Reads eval_results.jsonl, no new LLM calls beyond what RAGAS needs internally.
+# RAGAS evaluation — Faithfulness + Answer Relevancy (ragas 0.2.x API)
+# Uses Ollama llama3:8b as judge LLM — no API key needed.
 
 import sys, os, json
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -9,11 +8,16 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from datasets import Dataset
 from ragas import evaluate
 from ragas.metrics import faithfulness, answer_relevancy
+from langchain_ollama import ChatOllama
+from ragas.llms import LangchainLLMWrapper
+from ragas.embeddings import LangchainEmbeddingsWrapper
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 LOG_PATH = "data/processed/eval_results.jsonl"
 OUT_PATH = "data/processed/ragas_results.json"
 
 RETRIEVE_ACTIONS = {"retrieve", "verify"}
+OLLAMA_MODEL     = "llama3:8b"
 
 
 def build_ragas_dataset(rows, system):
@@ -24,29 +28,23 @@ def build_ragas_dataset(rows, system):
         result = row["result"]
         if "error" in result:
             continue
-        action = result.get("action", "")
-        if action not in RETRIEVE_ACTIONS:
-            continue  # RAGAS faithfulness only meaningful when evidence was used
+        if result.get("action", "") not in RETRIEVE_ACTIONS:
+            continue
 
-        question = row["question"]
         answer = result.get("final_answer") or ""
-        # evidence stored as list of dicts or list of strings depending on action path
-        raw_evidence = result.get("evidence") or result.get("retrieved_docs") or []
-        if isinstance(raw_evidence, list) and raw_evidence and isinstance(raw_evidence[0], dict):
-            contexts = [d.get("text", "") for d in raw_evidence if d.get("text")]
-        elif isinstance(raw_evidence, list):
-            contexts = [str(d) for d in raw_evidence if d]
+        raw    = result.get("evidence") or result.get("retrieved_docs") or []
+        if isinstance(raw, list) and raw and isinstance(raw[0], dict):
+            contexts = [d.get("text", "") for d in raw if d.get("text")]
         else:
-            contexts = []
+            contexts = [str(d) for d in raw if d]
 
         if not contexts or not answer:
             continue
 
-        gt = row.get("ground_truth_answer") or ""
-        samples["question"].append(question)
+        samples["question"].append(row["question"])
         samples["answer"].append(answer)
         samples["contexts"].append(contexts)
-        samples["ground_truth"].append(gt)
+        samples["ground_truth"].append(row.get("ground_truth_answer") or "")
 
     return Dataset.from_dict(samples) if samples["question"] else None
 
@@ -54,27 +52,35 @@ def build_ragas_dataset(rows, system):
 def run_ragas():
     rows = [json.loads(l) for l in open(LOG_PATH, encoding="utf-8")]
 
-    systems = ["adaptive", "standard_rag", "self_reflection"]  # only systems that retrieve
+    llm        = LangchainLLMWrapper(ChatOllama(model=OLLAMA_MODEL, temperature=0))
+    embeddings = LangchainEmbeddingsWrapper(
+        HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    )
+
+    faithfulness.llm            = llm
+    answer_relevancy.llm        = llm
+    answer_relevancy.embeddings = embeddings
+
+    systems     = ["adaptive", "standard_rag", "self_reflection"]
     all_results = {}
 
     for system in systems:
         ds = build_ragas_dataset(rows, system)
         if ds is None or len(ds) == 0:
-            print(f"{system}: no retrieve/verify rows found — skipping RAGAS")
+            print(f"{system}: no retrieve/verify rows — skipping")
             continue
 
-        print(f"\n{system}: running RAGAS on {len(ds)} retrieve/verify rows...")
+        print(f"\n{system}: running RAGAS on {len(ds)} rows...")
         try:
             result = evaluate(ds, metrics=[faithfulness, answer_relevancy])
             scores = {
-                "faithfulness":      round(float(result["faithfulness"]), 3),
-                "answer_relevancy":  round(float(result["answer_relevancy"]), 3),
-                "n":                 len(ds),
+                "faithfulness":     round(float(result["faithfulness"]), 3),
+                "answer_relevancy": round(float(result["answer_relevancy"]), 3),
+                "n":                len(ds),
             }
             all_results[system] = scores
             print(f"  faithfulness:     {scores['faithfulness']}")
             print(f"  answer_relevancy: {scores['answer_relevancy']}")
-            print(f"  n = {scores['n']}")
         except Exception as e:
             print(f"  ERROR: {e}")
             all_results[system] = {"error": str(e)}

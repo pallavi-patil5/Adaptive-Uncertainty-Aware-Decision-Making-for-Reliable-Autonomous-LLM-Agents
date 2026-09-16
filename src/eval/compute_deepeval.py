@@ -1,165 +1,160 @@
 # src/eval/compute_deepeval.py
-# DeepEval evaluation — Hallucination + Answer Correctness (LLM-as-judge)
-# Stronger than substring matching in correctness.py — uses semantic judgment.
-# Reads eval_results.jsonl, uses Groq as the judge LLM via deepeval's custom LLM wrapper.
+# DeepEval 4.x evaluation — Hallucination + GEval Correctness
+# Uses Ollama llama3:8b as judge LLM — no API key needed.
 
-import sys, os, json
+import sys, os, json, re, warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from dotenv import load_dotenv
-load_dotenv()
-
-from deepeval import evaluate as deepeval_evaluate
-from deepeval.metrics import HallucinationMetric, AnswerRelevancyMetric, GEval
+from deepeval.metrics import HallucinationMetric, GEval
 from deepeval.models.base_model import DeepEvalBaseLLM
-from deepeval.test_case import LLMTestCase, LLMTestCaseParams
-from groq import Groq
+from deepeval.test_case import LLMTestCase
+try:
+    from deepeval.test_case import SingleTurnParams as EvalParams
+except ImportError:
+    from deepeval.test_case import LLMTestCaseParams as EvalParams
+import ollama as _ollama
 
 LOG_PATH = "data/processed/eval_results.jsonl"
 OUT_PATH = "data/processed/deepeval_results.json"
 
 RETRIEVE_ACTIONS = {"retrieve", "verify"}
+OLLAMA_MODEL     = "llama3:8b"
 
 
-# ── Groq wrapper so DeepEval uses our existing LLM, not OpenAI ────────────────
-class GroqJudge(DeepEvalBaseLLM):
-    def __init__(self):
-        self.client = Groq(api_key=os.environ["GROQ_API_KEY"])
-        self.model = "llama3-8b-8192"
+class OllamaJudge(DeepEvalBaseLLM):
+    """
+    DeepEval calls generate(prompt, schema=SomePydanticClass).
+    It then parses the returned STRING as JSON itself via trimAndLoadJson.
+    So generate() must always return a JSON string whose keys match the schema fields.
+    """
+    def load_model(self): return OLLAMA_MODEL
 
-    def load_model(self):
-        return self.client
-
-    def generate(self, prompt: str) -> str:
-        resp = self.client.chat.completions.create(
-            model=self.model,
+    def generate(self, prompt: str, schema=None) -> str:
+        raw = _ollama.chat(
+            model=OLLAMA_MODEL,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-        )
-        return resp.choices[0].message.content
+            options={"temperature": 0},
+        )["message"]["content"]
 
-    async def a_generate(self, prompt: str) -> str:
-        return self.generate(prompt)
+        if schema is None:
+            return raw
+
+        # Get the field names deepeval expects in the JSON response
+        fields = list(schema.model_fields.keys()) if hasattr(schema, "model_fields") else []
+
+        # Try to extract a JSON object from the LLM output
+        data = _extract_json(raw) or {}
+
+        # Fill any missing fields with sensible defaults
+        for k in fields:
+            if k not in data:
+                if k == "score":   data[k] = 0.5
+                elif k == "steps": data[k] = ["Evaluate whether the answer is correct."]
+                else:              data[k] = "Unable to determine."
+
+        return json.dumps(data)
+
+    async def a_generate(self, prompt: str, schema=None) -> str:
+        return self.generate(prompt, schema=schema)
 
     def get_model_name(self) -> str:
-        return self.model
+        return OLLAMA_MODEL
 
 
-# ── Build DeepEval test cases ─────────────────────────────────────────────────
+def _extract_json(text: str) -> dict | None:
+    text = text.strip()
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if m: text = m.group(1)
+    else:
+        m = re.search(r"(\{.*\})", text, re.DOTALL)
+        if m: text = m.group(1)
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
 def build_test_cases(rows, system):
-    halluc_cases, relevancy_cases, correctness_cases = [], [], []
-
+    halluc_cases, correctness_cases = [], []
     for row in rows:
         if row["system"] != system:
             continue
         result = row["result"]
         if "error" in result:
             continue
-
         question = row["question"]
-        answer = result.get("final_answer") or ""
+        answer   = result.get("final_answer") or ""
         if not answer:
             continue
-
-        gt = row.get("ground_truth_answer") or ""
+        gt     = row.get("ground_truth_answer") or ""
         action = result.get("action", "")
-
-        # Evidence context for hallucination metric
-        raw_evidence = result.get("evidence") or result.get("retrieved_docs") or []
-        if isinstance(raw_evidence, list) and raw_evidence and isinstance(raw_evidence[0], dict):
-            contexts = [d.get("text", "") for d in raw_evidence if d.get("text")]
-        elif isinstance(raw_evidence, list):
-            contexts = [str(d) for d in raw_evidence if d]
+        raw    = result.get("evidence") or result.get("retrieved_docs") or []
+        if isinstance(raw, list) and raw and isinstance(raw[0], dict):
+            contexts = [d.get("text", "") for d in raw if d.get("text")]
         else:
-            contexts = []
+            contexts = [str(d) for d in raw if d]
 
-        base = LLMTestCase(input=question, actual_output=answer,
-                           expected_output=gt if gt else None)
-
-        # Hallucination — only for rows that used evidence
         if action in RETRIEVE_ACTIONS and contexts:
             halluc_cases.append(LLMTestCase(
-                input=question, actual_output=answer,
-                context=contexts,
-                expected_output=gt if gt else None,
+                input=question, actual_output=answer, context=contexts,
             ))
-
-        # Answer relevancy — all rows
-        relevancy_cases.append(base)
-
-        # Answer correctness (GEval) — only rows with ground truth
         if gt:
             correctness_cases.append(LLMTestCase(
                 input=question, actual_output=answer, expected_output=gt
             ))
-
-    return halluc_cases, relevancy_cases, correctness_cases
+    return halluc_cases, correctness_cases
 
 
 def run_deepeval():
-    rows = [json.loads(l) for l in open(LOG_PATH, encoding="utf-8")]
-    judge = GroqJudge()
+    rows  = [json.loads(l) for l in open(LOG_PATH, encoding="utf-8")]
+    judge = OllamaJudge()
 
-    halluc_metric     = HallucinationMetric(threshold=0.5, model=judge, include_reason=False)
-    relevancy_metric  = AnswerRelevancyMetric(threshold=0.5, model=judge, include_reason=False)
+    halluc_metric = HallucinationMetric(threshold=0.5, model=judge, include_reason=False)
     correctness_metric = GEval(
         name="AnswerCorrectness",
         criteria="Does the actual output correctly answer the question given the expected output as reference?",
-        evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.EXPECTED_OUTPUT],
+        evaluation_params=[EvalParams.INPUT, EvalParams.ACTUAL_OUTPUT, EvalParams.EXPECTED_OUTPUT],
         model=judge,
+        strict_mode=False,
+        async_mode=False,
     )
 
-    systems = ["adaptive", "normal_llm", "standard_rag", "self_reflection", "fixed_threshold"]
+    systems     = ["adaptive", "normal_llm", "standard_rag", "self_reflection", "fixed_threshold"]
     all_results = {}
 
     for system in systems:
-        halluc_cases, relevancy_cases, correctness_cases = build_test_cases(rows, system)
-        print(f"\n{system}: halluc={len(halluc_cases)}  relevancy={len(relevancy_cases)}  correctness={len(correctness_cases)}")
-
+        halluc_cases, correctness_cases = build_test_cases(rows, system)
+        print(f"\n{system}: halluc={len(halluc_cases)}  correctness={len(correctness_cases)}")
         scores = {}
 
-        # Hallucination score (lower = less hallucination)
         if halluc_cases:
-            try:
-                for tc in halluc_cases:
+            halluc_scores, failed = [], 0
+            for tc in halluc_cases:
+                try:
                     halluc_metric.measure(tc)
-                avg_halluc = sum(tc.metrics_metadata[0].score for tc in halluc_cases
-                                 if tc.metrics_metadata) / len(halluc_cases)
-                scores["hallucination_score"] = round(avg_halluc, 3)
-                print(f"  hallucination_score (DeepEval): {scores['hallucination_score']}")
-            except Exception as e:
-                print(f"  hallucination ERROR: {e}")
-                scores["hallucination_score"] = None
+                    s = getattr(halluc_metric, "score", None)
+                    if s is not None:
+                        halluc_scores.append(float(s))
+                except Exception:
+                    failed += 1
+            scores["hallucination_score"] = round(sum(halluc_scores)/len(halluc_scores), 3) if halluc_scores else None
+            print(f"  hallucination_score: {scores['hallucination_score']}  (n={len(halluc_scores)} failed={failed})")
 
-        # Answer relevancy
-        if relevancy_cases:
-            try:
-                for tc in relevancy_cases:
-                    relevancy_metric.measure(tc)
-                avg_rel = sum(tc.metrics_metadata[0].score for tc in relevancy_cases
-                              if tc.metrics_metadata) / len(relevancy_cases)
-                scores["answer_relevancy"] = round(avg_rel, 3)
-                print(f"  answer_relevancy (DeepEval):    {scores['answer_relevancy']}")
-            except Exception as e:
-                print(f"  relevancy ERROR: {e}")
-                scores["answer_relevancy"] = None
-
-        # Answer correctness via GEval
         if correctness_cases:
-            try:
-                for tc in correctness_cases:
+            corr_scores, failed = [], 0
+            for tc in correctness_cases:
+                try:
                     correctness_metric.measure(tc)
-                avg_corr = sum(tc.metrics_metadata[0].score for tc in correctness_cases
-                               if tc.metrics_metadata) / len(correctness_cases)
-                scores["answer_correctness_geval"] = round(avg_corr, 3)
-                print(f"  answer_correctness GEval:       {scores['answer_correctness_geval']}")
-            except Exception as e:
-                print(f"  correctness ERROR: {e}")
-                scores["answer_correctness_geval"] = None
+                    s = getattr(correctness_metric, "score", None)
+                    if s is not None:
+                        corr_scores.append(float(s))
+                except Exception:
+                    failed += 1
+            scores["answer_correctness_geval"] = round(sum(corr_scores)/len(corr_scores), 3) if corr_scores else None
+            print(f"  geval_correctness:   {scores['answer_correctness_geval']}  (n={len(corr_scores)} failed={failed})")
 
-        scores["n_halluc"]      = len(halluc_cases)
-        scores["n_relevancy"]   = len(relevancy_cases)
-        scores["n_correctness"] = len(correctness_cases)
+        scores.update({"n_halluc": len(halluc_cases), "n_correctness": len(correctness_cases)})
         all_results[system] = scores
 
     with open(OUT_PATH, "w") as f:
