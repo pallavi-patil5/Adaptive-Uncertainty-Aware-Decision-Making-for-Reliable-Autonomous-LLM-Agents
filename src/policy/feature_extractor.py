@@ -26,7 +26,7 @@ def extract_features(question: str, n_consistency_samples: int = 3) -> dict:
     # Week 3 signals
     
 
-    RELEVANCE_DISTANCE_THRESHOLD = 0.55  # calibrated in Week 4 Step 0 against real indexed evidence
+    RELEVANCE_DISTANCE_THRESHOLD = 0.6  # must match evidence_retrieval.py default
 
     ret = retrieval_signals(question, k=3)
     evidence_coverage = ret["evidence_coverage"]

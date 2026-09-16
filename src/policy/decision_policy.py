@@ -1,78 +1,67 @@
 # src/policy/decision_policy.py
-LAMBDA = 0.15
+# Lambda empirically tuned via lambda_sweep.py: best action_accuracy at 0.05
+# Lower lambda = lower cost penalty = more willing to retrieve/verify
+LAMBDA = 0.05
 
-# Fixed cost proxies (relative LLM/tool calls) — from Step 1's documented objective
+# Costs calibrated from Tier 4 empirical averages (avg_llm_calls per action):
+#   answer  ~1.0 LLM call
+#   clarify ~1.0 LLM call
+#   retrieve ~1.3 LLM calls (1 generate + occasional rerank)
+#   verify  ~1.6 LLM calls (generate + verification pass)
+#   abstain  0 LLM calls
+# Normalised relative to answer=1.0
 ACTION_COSTS = {
-    "answer": 1,
-    "verify": 2,
-    "retrieve": 3,
-    "clarify": 1,
-    "abstain": 0,
+    "answer": 1.0,
+    "retrieve": 1.3,
+    "verify": 1.6,
+    "clarify": 1.0,
+    "abstain": 0.0,
 }
 
 
 def estimate_reliability(features: dict) -> dict:
-    """Per-action reliability estimates, per the documented formal objective (Step 1)."""
+    """Per-action reliability estimates, per the documented formal objective.
+
+    Key design decisions:
+    - retrieve is driven by uncertainty + complexity alone, NOT gated by evidence_coverage.
+      evidence_coverage is 0 before retrieval happens — gating on it creates a catch-22
+      where retrieve can never win on questions with no pre-cached evidence.
+    - verify IS gated by evidence_coverage: it only makes sense after evidence exists.
+    - abstain requires BOTH high uncertainty AND low complexity (simple question the model
+      genuinely doesn't know). High-complexity uncertain questions should retrieve, not abstain.
+    """
     uncertainty = features["uncertainty"]
     contradiction = features["contradiction_prob"]
     ambiguity = features["ambiguity"]
     evidence_coverage = features["evidence_coverage"]
+    complexity = features.get("complexity", 0.0)
+
+    # retrieve signal: uncertain OR complex question — attempt retrieval regardless of
+    # whether corpus already has evidence (retrieval is the action that *produces* evidence).
+    # Complexity weight is 0.7 for high-complexity questions (multi-hop, specific facts)
+    # because the model is frequently confidently wrong on these even at low uncertainty.
+    complexity_weight = 0.7 if complexity >= 0.4 else 0.5
+    retrieve_signal = (1 - complexity_weight) * uncertainty + complexity_weight * complexity
 
     return {
-        # High confidence + no contradiction + unambiguous -> answer directly
-        "answer": (1 - uncertainty) * (1 - contradiction) * (1 - ambiguity),
-        # Uncertain AND evidence exists in store to fetch -> retrieve is worthwhile.
-        # Edge-case: if evidence_coverage == 0 (empty corpus or no relevant docs),
-        # retrieve score collapses to 0 and the policy falls through to abstain
-        # (uncertainty * 1.0). This is intentional — retrieving from an empty store
-        # wastes calls and returns nothing. If your corpus is populated but coverage
-        # is still 0 for a query, check the relevance_distance_threshold in
-        # evidence_retrieval.py (currently 0.55) — it may be too tight.
-        "retrieve": uncertainty * evidence_coverage,
-        # Evidence contradicts candidate answer -> verify.
-        # Also gated by evidence_coverage so verify isn't triggered when no docs exist.
+        "answer": (1 - uncertainty) * (1 - contradiction) * (1 - ambiguity) * (1 - 0.3 * complexity),
+        # not gated by evidence_coverage — retrieve is the action that fetches evidence
+        "retrieve": retrieve_signal,
+        # gated by evidence_coverage: verify only makes sense when evidence already exists
         "verify": contradiction * evidence_coverage,
-        # Question is genuinely ambiguous -> clarify
         "clarify": ambiguity,
-        # Uncertain AND no evidence available -> abstain
-        "abstain": uncertainty * (1 - evidence_coverage),
+        # abstain only when uncertain AND simple (low complexity) AND no evidence available
+        # high-complexity uncertain questions should retrieve, not give up
+        "abstain": uncertainty * (1 - complexity) * (1 - evidence_coverage),
     }
 
 
 def decide_action(features: dict, lam: float = LAMBDA) -> dict:
-    """
-    A* = argmax_A [ Reliability(A) - lambda * Cost(A) ]
-    Returns the chosen action plus the full score breakdown (for logging/debugging/ablation).
-    """
+    """A* = argmax_A [ Reliability(A) - lambda * Cost(A) ]"""
     reliability = estimate_reliability(features)
-    scores = {
-        action: reliability[action] - lam * ACTION_COSTS[action]
-        for action in reliability
-    }
+    scores = {action: reliability[action] - lam * ACTION_COSTS[action] for action in reliability}
     best_action = max(scores, key=scores.get)
-
-    return {
-        "action": best_action,
-        "scores": scores,
-        "reliability": reliability,
-    }
-
-# src/policy/decision_policy.py — add this to estimate_reliability()
-def estimate_reliability(features: dict) -> dict:
-    uncertainty = features["uncertainty"]
-    contradiction = features["contradiction_prob"]
-    ambiguity = features["ambiguity"]
-    evidence_coverage = features["evidence_coverage"]
-    complexity = features.get("complexity", 0.0)  # NEW
-
-    return {
-        # High confidence + no contradiction + unambiguous + not too complex -> answer directly
-        "answer": (1 - uncertainty) * (1 - contradiction) * (1 - ambiguity) * (1 - 0.3 * complexity),
-        "retrieve": uncertainty * evidence_coverage,
-        "verify": contradiction * evidence_coverage,
-        "clarify": ambiguity,
-        "abstain": uncertainty * (1 - evidence_coverage),
-    }
+    return {"action": best_action, "scores": scores, "reliability": reliability}
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # src/eval/build_eval_sample.py
 import sys, os, json, random
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 def build_sample(
     unified_path="data/processed/unified_dataset.jsonl",
