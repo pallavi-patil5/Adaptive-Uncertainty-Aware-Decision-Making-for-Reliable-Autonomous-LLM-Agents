@@ -11,7 +11,7 @@ from signals.ambiguity import ambiguity_score
 from signals.complexity import complexity_score
 
 
-def extract_features(question: str, n_consistency_samples: int = 3) -> dict:
+def extract_features(question: str, n_consistency_samples: int = 5) -> dict:
     """
     Runs the full Week 2 + Week 3 signal pipeline for one question.
     Returns a flat dict of features ready for both the rule-based policy
