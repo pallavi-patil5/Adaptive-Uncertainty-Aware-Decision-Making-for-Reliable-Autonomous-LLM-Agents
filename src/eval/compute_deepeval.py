@@ -49,7 +49,7 @@ class OllamaJudge(DeepEvalBaseLLM):
         # Fill any missing fields with sensible defaults
         for k in fields:
             if k not in data:
-                if k == "score":   data[k] = 0.5
+                if k == "score":   data[k] = 0.0  # explicit 0 so fallback is visible in averages
                 elif k == "steps": data[k] = ["Evaluate whether the answer is correct."]
                 else:              data[k] = "Unable to determine."
 
@@ -89,7 +89,7 @@ def build_test_cases(rows, system):
             continue
         gt     = row.get("ground_truth_answer") or ""
         action = result.get("action", "")
-        raw    = result.get("evidence") or result.get("retrieved_docs") or []
+        raw    = result.get("evidence_used") or result.get("evidence") or result.get("retrieved_docs") or []
         if isinstance(raw, list) and raw and isinstance(raw[0], dict):
             contexts = [d.get("text", "") for d in raw if d.get("text")]
         else:
@@ -143,14 +143,21 @@ def run_deepeval():
 
         if correctness_cases:
             corr_scores, failed = [], 0
-            for tc in correctness_cases:
+            for i, tc in enumerate(correctness_cases):
                 try:
                     correctness_metric.measure(tc)
                     s = getattr(correctness_metric, "score", None)
                     if s is not None:
                         corr_scores.append(float(s))
-                except Exception:
+                        # Spot-check first 3 cases so you can eyeball judge quality
+                        if i < 3:
+                            print(f"  [spot-check {i}] q={tc.input[:60]!r}")
+                            print(f"    answer={tc.actual_output[:80]!r}")
+                            print(f"    expected={tc.expected_output[:80]!r}")
+                            print(f"    score={s:.3f}  reason={getattr(correctness_metric,'reason','n/a')}")
+                except Exception as e:
                     failed += 1
+                    if i < 3: print(f"  [spot-check {i}] EXCEPTION: {e}")
             scores["answer_correctness_geval"] = round(sum(corr_scores)/len(corr_scores), 3) if corr_scores else None
             print(f"  geval_correctness:   {scores['answer_correctness_geval']}  (n={len(corr_scores)} failed={failed})")
 

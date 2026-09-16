@@ -8,10 +8,11 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from datasets import Dataset
 from ragas import evaluate
 from ragas.metrics import faithfulness, answer_relevancy
+from ragas.run_config import RunConfig
 from langchain_ollama import ChatOllama
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 LOG_PATH = "data/processed/eval_results.jsonl"
 OUT_PATH = "data/processed/ragas_results.json"
@@ -32,7 +33,7 @@ def build_ragas_dataset(rows, system):
             continue
 
         answer = result.get("final_answer") or ""
-        raw    = result.get("evidence") or result.get("retrieved_docs") or []
+        raw    = result.get("evidence_used") or result.get("evidence") or result.get("retrieved_docs") or []
         if isinstance(raw, list) and raw and isinstance(raw[0], dict):
             contexts = [d.get("text", "") for d in raw if d.get("text")]
         else:
@@ -57,9 +58,10 @@ def run_ragas():
         HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     )
 
-    faithfulness.llm            = llm
-    answer_relevancy.llm        = llm
-    answer_relevancy.embeddings = embeddings
+    for metric in [faithfulness, answer_relevancy]:
+        metric.llm = llm
+        if hasattr(metric, "embeddings"):
+            metric.embeddings = embeddings
 
     systems     = ["adaptive", "standard_rag", "self_reflection"]
     all_results = {}
@@ -72,7 +74,13 @@ def run_ragas():
 
         print(f"\n{system}: running RAGAS on {len(ds)} rows...")
         try:
-            result = evaluate(ds, metrics=[faithfulness, answer_relevancy])
+            result = evaluate(
+                ds,
+                metrics=[faithfulness, answer_relevancy],
+                llm=llm,
+                embeddings=embeddings,
+                run_config=RunConfig(max_retries=2, max_wait=30),
+            )
             scores = {
                 "faithfulness":     round(float(result["faithfulness"]), 3),
                 "answer_relevancy": round(float(result["answer_relevancy"]), 3),
