@@ -2,13 +2,15 @@
 import json, os
 
 print("=" * 70)
-print("WEEK 6 EVALUATION SUMMARY")
+print("FULL EVALUATION SUMMARY")
 print("=" * 70)
 
 files = {
-    "Threshold sweep": "data/processed/threshold_sweep_results.json",
-    "Lambda sweep": "data/processed/lambda_sweep_results.json",
-    "Ablation study": "data/processed/ablation_results.json",
+    "Threshold sweep":  "data/processed/threshold_sweep_results.json",
+    "Lambda sweep":     "data/processed/lambda_sweep_results.json",
+    "Ablation study":   "data/processed/ablation_results.json",
+    "RAGAS results":    "data/processed/ragas_results.json",
+    "DeepEval results": "data/processed/deepeval_results.json",
 }
 
 for label, path in files.items():
@@ -17,7 +19,8 @@ for label, path in files.items():
         with open(path) as f:
             print(json.dumps(json.load(f), indent=2))
     else:
-        print("Not yet generated — run the corresponding script first.")
+        print(f"Not yet generated — run the corresponding script first.")
 
-print("\nAlso re-run compute_tier1.py, compute_tier2.py, compute_tier3.py, compute_tier4.py")
-print("and copy their printed tables into your report — they print directly, not saved to JSON here.")
+print("\nSklearn-based tiers: re-run compute_tier1.py, compute_tier2.py, compute_tier3.py, compute_tier4.py")
+print("RAGAS:    python src/eval/compute_ragas.py")
+print("DeepEval: python src/eval/compute_deepeval.py")

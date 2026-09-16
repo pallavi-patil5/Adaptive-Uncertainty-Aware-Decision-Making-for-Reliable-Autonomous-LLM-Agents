@@ -379,6 +379,59 @@ elif page == "③ Research Metrics":
             f'<div class="ml">Avg Latency</div>'
             f'</div>', unsafe_allow_html=True)
 
+    # ── RAGAS ─────────────────────────────────────────────────────────────────
+    ragas_present = [s for s in present if metrics[s].get("ragas_faithfulness") is not None]
+    if ragas_present:
+        st.markdown("---")
+        st.markdown("### RAGAS — Faithfulness & Answer Relevancy")
+        st.caption("Computed on retrieve/verify rows only. Faithfulness: does the answer stay grounded in evidence? Answer Relevancy: is the answer on-topic?")
+        rcols = st.columns(len(ragas_present))
+        for i, sys in enumerate(ragas_present):
+            m = metrics[sys]
+            c = SYS_COLORS[sys]
+            faith = m["ragas_faithfulness"]
+            relev = m["ragas_answer_relevancy"]
+            best_f = faith == max(metrics[s]["ragas_faithfulness"] for s in ragas_present if metrics[s].get("ragas_faithfulness") is not None)
+            best_r = relev == max(metrics[s]["ragas_answer_relevancy"] for s in ragas_present if metrics[s].get("ragas_answer_relevancy") is not None)
+            rcols[i].markdown(
+                f'<div class="mc" style="border-top:3px solid {c}">'
+                f'<div style="font-size:0.78rem;color:{c};font-weight:700;margin-bottom:8px">{LABELS[sys]}</div>'
+                f'<div class="mv" style="color:{"#4caf50" if best_f else "#e0e0e0"}">{faith:.3f}</div>'
+                f'<div class="ml">Faithfulness ↑</div>'
+                f'<div style="margin-top:10px;font-size:0.85rem;color:{"#4caf50" if best_r else "#e0e0e0"}">{relev:.3f}</div>'
+                f'<div class="ml">Answer Relevancy ↑</div>'
+                f'</div>', unsafe_allow_html=True)
+    else:
+        st.info("RAGAS scores not yet computed — run `python src/eval/compute_ragas.py` first.")
+
+    # ── DeepEval ──────────────────────────────────────────────────────────────
+    de_present = [s for s in present if metrics[s].get("deepeval_geval_correctness") is not None]
+    if de_present:
+        st.markdown("---")
+        st.markdown("### DeepEval — LLM-as-Judge Metrics")
+        st.caption("Hallucination score (lower = less hallucination). GEval Correctness: semantic correctness judged by LLM, stronger than substring match.")
+        dcols = st.columns(len(de_present))
+        for i, sys in enumerate(de_present):
+            m = metrics[sys]
+            c = SYS_COLORS[sys]
+            halluc = m.get("deepeval_hallucination")
+            geval  = m.get("deepeval_geval_correctness")
+            relev  = m.get("deepeval_answer_relevancy")
+            best_g = geval is not None and geval == max((metrics[s].get("deepeval_geval_correctness") or 0) for s in de_present)
+            best_h = halluc is not None and halluc == min((metrics[s].get("deepeval_hallucination") or 1) for s in de_present)
+            dcols[i].markdown(
+                f'<div class="mc" style="border-top:3px solid {c}">'
+                f'<div style="font-size:0.78rem;color:{c};font-weight:700;margin-bottom:8px">{LABELS[sys]}</div>'
+                f'<div class="mv" style="color:{"#4caf50" if best_g else "#e0e0e0"}">{geval:.3f if geval is not None else "n/a"}</div>'
+                f'<div class="ml">GEval Correctness ↑</div>'
+                f'<div style="margin-top:10px;font-size:0.85rem;color:{"#4caf50" if best_h else "#e0e0e0"}">{halluc:.3f if halluc is not None else "n/a"}</div>'
+                f'<div class="ml">Hallucination Score ↓</div>'
+                f'<div style="margin-top:6px;font-size:0.82rem;color:#aaa">{relev:.3f if relev is not None else "n/a"}</div>'
+                f'<div class="ml">Answer Relevancy ↑</div>'
+                f'</div>', unsafe_allow_html=True)
+    else:
+        st.info("DeepEval scores not yet computed — run `python src/eval/compute_deepeval.py` first.")
+
     # ── Summary table ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Full Comparison Table")
@@ -392,6 +445,8 @@ elif page == "③ Research Metrics":
             "Hallucination ↓":      f'{m["hallucination_rate"]:.1%}',
             "Action Accuracy ↑":    f'{m["action_accuracy"]:.1%}',
             "Unnecessary Ret ↓":    f'{m["unnecessary_retrieval"]:.1%}',
+            "GEval Correctness ↑":  str(m.get("deepeval_geval_correctness") or "n/a"),
+            "RAGAS Faithfulness ↑": str(m.get("ragas_faithfulness") or "n/a"),
             "Avg LLM Calls ↓":      f'{m["avg_llm_calls"]:.1f}',
             "Avg Latency ↓":        f'{m["avg_latency_s"]:.2f}s',
         })
