@@ -1,6 +1,9 @@
 # app/frontend/streamlit_app.py
 import streamlit as st
 import requests
+import json, os
+
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "processed")
 
 API_URL = "http://localhost:8000"
 
@@ -147,6 +150,15 @@ if page == "① Agent Demo":
     with right:
         st.markdown('<div class="sec">Final Answer</div>', unsafe_allow_html=True)
         ans = data.get("final_answer") or "*(No direct answer)*"
+        source_map = {
+            "answer":   ("🧠", "From model knowledge",       "#4caf50"),
+            "retrieve": ("📚", "From retrieved evidence",    "#2196f3"),
+            "verify":   ("✓",  "Verified against evidence",  "#ff9800"),
+            "clarify":  ("❓", "Clarification requested",    "#9c27b0"),
+            "abstain":  ("🚫", "Abstained — too uncertain",  "#f44336"),
+        }
+        icon, src_label, src_color = source_map.get(action, ("🧠", "Model", "#888"))
+        st.markdown(f'<div style="font-size:0.78rem;color:{src_color};margin-bottom:6px">{icon} {src_label}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="ans-box">{ans}</div>', unsafe_allow_html=True)
         eff = data["efficiency"]
         c1, c2, c3 = st.columns(3)
@@ -183,6 +195,45 @@ if page == "① Agent Demo":
             f'<div class="ml">{a.upper()}</div>'
             f'<div style="font-size:0.7rem;color:#555;margin-top:4px">rel={rel:.3f}</div>'
             f'</div>', unsafe_allow_html=True)
+
+    # Action scores bar chart
+    import pandas as pd, altair as alt
+    df_scores = pd.DataFrame([
+        {"action": a.upper(), "score": s, "color": COLORS.get(a, "#888")}
+        for a, s in scores.items()
+    ])
+    chart = alt.Chart(df_scores).mark_bar().encode(
+        x=alt.X("score:Q", title="Score"),
+        y=alt.Y("action:N", sort="-x", title=None),
+        color=alt.Color("color:N", scale=None),
+        tooltip=["action", "score"]
+    ).properties(height=160, title="Action Score Comparison")
+    st.altair_chart(chart, use_container_width=True)
+
+    # Radar-style signal chart
+    st.markdown('<div class="sec">Signal Radar</div>', unsafe_allow_html=True)
+    sig_items = [
+        ("Uncertainty",       signals["uncertainty"]),
+        ("Self-Consistency",  signals["self_consistency"]),
+        ("Self-Eval",         signals["self_eval"]),
+        ("Ambiguity",         signals["ambiguity"]),
+        ("Complexity",        signals["complexity"]),
+        ("Evidence Coverage", signals["evidence_coverage"]),
+        ("Contradiction",     signals["contradiction_prob"]),
+        ("Support Score",     signals["support_score"]),
+    ]
+    df_sig = pd.DataFrame(sig_items, columns=["signal", "value"])
+    radar = alt.Chart(df_sig).mark_bar(cornerRadiusEnd=4).encode(
+        x=alt.X("value:Q", scale=alt.Scale(domain=[0, 1]), title="Score"),
+        y=alt.Y("signal:N", sort="-x", title=None),
+        color=alt.condition(
+            alt.datum.value > 0.6,
+            alt.value("#f44336"),
+            alt.condition(alt.datum.value > 0.3, alt.value("#ff9800"), alt.value("#4caf50"))
+        ),
+        tooltip=["signal", "value"]
+    ).properties(height=220, title="Uncertainty & Evidence Signals (0–1)")
+    st.altair_chart(radar, use_container_width=True)
 
     chunks = data.get("evidence_chunks", [])
     if chunks:
@@ -265,6 +316,24 @@ elif page == "② Decision Trace":
                 f'<div style="font-size:0.85rem;margin-top:4px">Score: <b style="color:{c}">{s:+.3f}</b> &nbsp; Reliability: {rel:.3f}</div>'
                 f'</div>', unsafe_allow_html=True)
 
+        # Signal vs threshold chart for this query
+        import pandas as pd, altair as alt
+        sig_df = pd.DataFrame([
+            {"signal": k, "value": round(v, 3)}
+            for k, v in signals.items()
+        ])
+        sig_chart = alt.Chart(sig_df).mark_bar(cornerRadiusEnd=3).encode(
+            x=alt.X("value:Q", scale=alt.Scale(domain=[0, 1]), title="Value"),
+            y=alt.Y("signal:N", sort="-x", title=None),
+            color=alt.condition(
+                alt.datum.value > 0.6,
+                alt.value("#f44336"),
+                alt.condition(alt.datum.value > 0.3, alt.value("#ff9800"), alt.value("#4caf50"))
+            ),
+            tooltip=["signal", "value"]
+        ).properties(height=220, title="Signal Values for This Query")
+        st.altair_chart(sig_chart, use_container_width=True)
+
     st.markdown("---")
     st.markdown('<div class="sec">Candidate Answer (before action)</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="ans-box" style="color:#888">{data.get("candidate_answer","—")}</div>', unsafe_allow_html=True)
@@ -298,6 +367,8 @@ elif page == "③ Research Metrics":
 
     present = [s for s in SYSTEMS if s in metrics]
 
+    import pandas as pd, altair as alt
+
     # ── Tier 1 ────────────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Tier 1 — Answer Quality")
@@ -318,6 +389,23 @@ elif page == "③ Research Metrics":
             f'<div class="ml">Hallucination Rate ↓</div>'
             f'<div style="margin-top:6px;font-size:0.72rem;color:#555">n={m["n"]}</div>'
             f'</div>', unsafe_allow_html=True)
+
+    # Grouped bar: Accuracy vs Hallucination per system
+    t1_rows = []
+    for s in present:
+        t1_rows += [
+            {"System": LABELS[s], "Metric": "Accuracy ↑",        "Value": metrics[s]["accuracy"],          "color": SYS_COLORS[s]},
+            {"System": LABELS[s], "Metric": "Hallucination ↓",   "Value": metrics[s]["hallucination_rate"], "color": SYS_COLORS[s]},
+        ]
+    df_t1 = pd.DataFrame(t1_rows)
+    t1_chart = alt.Chart(df_t1).mark_bar().encode(
+        x=alt.X("System:N", title=None),
+        y=alt.Y("Value:Q", scale=alt.Scale(domain=[0, 1]), title="Score"),
+        color=alt.Color("System:N", scale=alt.Scale(domain=list(LABELS.values()), range=[SYS_COLORS[s] for s in present])),
+        column=alt.Column("Metric:N", title=None),
+        tooltip=["System", "Metric", alt.Tooltip("Value:Q", format=".1%")]
+    ).properties(width=220, height=220)
+    st.altair_chart(t1_chart)
 
     # ── Tier 3 ────────────────────────────────────────────────────────────────
     st.markdown("---")
@@ -379,6 +467,23 @@ elif page == "③ Research Metrics":
             f'<div class="ml">Avg Latency</div>'
             f'</div>', unsafe_allow_html=True)
 
+    # Scatter: Accuracy vs Avg LLM Calls — efficiency frontier
+    df_scatter = pd.DataFrame([
+        {"System": LABELS[s], "Accuracy": metrics[s]["accuracy"],
+         "Avg LLM Calls": metrics[s]["avg_llm_calls"], "color": SYS_COLORS[s]}
+        for s in present
+    ])
+    scatter = alt.Chart(df_scatter).mark_circle(size=120).encode(
+        x=alt.X("Avg LLM Calls:Q", title="Avg LLM Calls (lower = cheaper)"),
+        y=alt.Y("Accuracy:Q", scale=alt.Scale(domain=[0, 1]), title="Accuracy (higher = better)"),
+        color=alt.Color("color:N", scale=None),
+        tooltip=["System", alt.Tooltip("Accuracy:Q", format=".1%"), "Avg LLM Calls"]
+    ).mark_circle(size=120) + alt.Chart(df_scatter).mark_text(dy=-12, fontSize=11).encode(
+        x="Avg LLM Calls:Q", y="Accuracy:Q", text="System:N",
+        color=alt.Color("color:N", scale=None)
+    )
+    st.altair_chart(scatter.properties(height=280, title="Efficiency Frontier — Accuracy vs Cost"), use_container_width=True)
+
     # ── RAGAS ─────────────────────────────────────────────────────────────────
     ragas_present = [s for s in present if metrics[s].get("ragas_faithfulness") is not None]
     if ragas_present:
@@ -431,6 +536,65 @@ elif page == "③ Research Metrics":
                 f'</div>', unsafe_allow_html=True)
     else:
         st.info("DeepEval scores not yet computed — run `python src/eval/compute_deepeval.py` first.")
+
+    # ── Threshold Sweep ───────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### Threshold Sweep — Reliability vs Cost")
+    st.caption("As the uncertainty threshold increases, retrieval rate drops but so does accuracy. The optimal threshold balances both.")
+    sweep_path = os.path.join(DATA_DIR, "threshold_sweep_results.json")
+    if os.path.exists(sweep_path):
+        import pandas as pd
+        sweep = json.load(open(sweep_path))
+        df_sweep = pd.DataFrame(sweep)
+        import altair as alt
+        base = alt.Chart(df_sweep).encode(x=alt.X("threshold:Q", title="Uncertainty Threshold"))
+        acc_line = base.mark_line(color="#2196f3", strokeWidth=2).encode(
+            y=alt.Y("accuracy:Q", title="Value", scale=alt.Scale(domain=[0, 1])),
+            tooltip=["threshold", "accuracy"]
+        )
+        ret_line = base.mark_line(color="#ff9800", strokeWidth=2, strokeDash=[4, 2]).encode(
+            y="retrieval_rate:Q",
+            tooltip=["threshold", "retrieval_rate"]
+        )
+        st.altair_chart((acc_line + ret_line).properties(height=280), use_container_width=True)
+        st.markdown('<span style="color:#2196f3">— Accuracy</span> &nbsp;&nbsp; <span style="color:#ff9800">- - Retrieval Rate</span>', unsafe_allow_html=True)
+    else:
+        st.info("Run `python src/eval/threshold_sweep.py` first.")
+
+    # ── Ablation Study ────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### Signal Ablation Study")
+    st.caption("Action accuracy when each signal is removed. A larger drop = that signal contributes more to the policy.")
+    ablation_path = os.path.join(DATA_DIR, "ablation_results.json")
+    if os.path.exists(ablation_path):
+        ablation = json.load(open(ablation_path))
+        baseline = ablation.get("full_model", 0)
+        signal_labels = {
+            "full_model":               "Full Model",
+            "remove_uncertainty":       "− Uncertainty",
+            "remove_evidence_coverage": "− Evidence Coverage",
+            "remove_contradiction":     "− Contradiction",
+            "remove_ambiguity":         "− Ambiguity",
+            "remove_complexity":        "− Complexity",
+        }
+        df_ab = pd.DataFrame([
+            {"Condition": signal_labels.get(k, k), "Accuracy": v, "Delta": v - baseline, "is_base": k == "full_model"}
+            for k, v in ablation.items()
+        ])
+        ab_chart = alt.Chart(df_ab).mark_bar(cornerRadiusEnd=4).encode(
+            x=alt.X("Accuracy:Q", scale=alt.Scale(domain=[0, 1]), title="Action Accuracy"),
+            y=alt.Y("Condition:N", sort="-x", title=None),
+            color=alt.condition(
+                alt.datum.is_base,
+                alt.value("#2196f3"),
+                alt.condition(alt.datum.Delta >= 0, alt.value("#4caf50"), alt.value("#f44336"))
+            ),
+            tooltip=["Condition", alt.Tooltip("Accuracy:Q", format=".1%"), alt.Tooltip("Delta:Q", format="+.1%")]
+        ).properties(height=220, title="Ablation: Action Accuracy per Signal Removed")
+        rule = alt.Chart(pd.DataFrame([{"x": baseline}])).mark_rule(strokeDash=[4, 2], color="#555").encode(x="x:Q")
+        st.altair_chart((ab_chart + rule), use_container_width=True)
+    else:
+        st.info("Run `python src/eval/ablation_study.py` first.")
 
     # ── Summary table ─────────────────────────────────────────────────────────
     st.markdown("---")

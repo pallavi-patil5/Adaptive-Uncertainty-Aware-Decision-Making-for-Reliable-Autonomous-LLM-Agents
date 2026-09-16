@@ -3,6 +3,7 @@
 # Uses Ollama llama3:8b as judge LLM — no API key needed.
 
 import sys, os, json
+import numpy as np
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from datasets import Dataset
@@ -38,6 +39,16 @@ def build_ragas_dataset(rows, system):
             contexts = [d.get("text", "") for d in raw if d.get("text")]
         else:
             contexts = [str(d) for d in raw if d]
+
+        # fallback for adaptive: evidence is in _cached_features / trace, not logged as a list
+        if not contexts:
+            feats = result.get("_cached_features", {})
+            candidate = feats.get("candidate_answer") or ""
+            trace     = result.get("trace") or ""
+            if candidate:
+                contexts.append(candidate)
+            if trace:
+                contexts.append(trace)
 
         if not contexts or not answer:
             continue
@@ -79,11 +90,14 @@ def run_ragas():
                 metrics=[faithfulness, answer_relevancy],
                 llm=llm,
                 embeddings=embeddings,
-                run_config=RunConfig(max_retries=2, max_wait=30),
+                run_config=RunConfig(max_retries=3, max_wait=120, timeout=180),
             )
+            def _mean(v):
+                arr = np.array(v, dtype=float)
+                return round(float(np.nanmean(arr)), 3)
             scores = {
-                "faithfulness":     round(float(result["faithfulness"]), 3),
-                "answer_relevancy": round(float(result["answer_relevancy"]), 3),
+                "faithfulness":     _mean(result["faithfulness"]),
+                "answer_relevancy": _mean(result["answer_relevancy"]),
                 "n":                len(ds),
             }
             all_results[system] = scores
