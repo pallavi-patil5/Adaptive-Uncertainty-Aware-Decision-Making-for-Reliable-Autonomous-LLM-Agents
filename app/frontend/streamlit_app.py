@@ -2,6 +2,8 @@
 import streamlit as st
 import requests
 import json, os
+import pandas as pd
+import altair as alt
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "processed")
 
@@ -38,10 +40,10 @@ st.markdown("""
 
 DEMOS = [
     {"label": "🟢 Certain — ANSWER",        "q": "What is the capital of France?"},
-    {"label": "🔵 Knowledge gap — RETRIEVE", "q": "What is the current price of gold in India?"},
-    {"label": "🟠 Conflicting — VERIFY",     "q": "Is the statement 'the Earth is flat' scientifically supported?"},
-    {"label": "🟣 Ambiguous — CLARIFY",      "q": "Tell me about Apple."},
-    {"label": "🔴 Unknowable — ABSTAIN",     "q": "What was the exact thought of Albert Einstein immediately before his death?"},
+    {"label": "🔵 Knowledge gap — RETRIEVE", "q": "What were the exact GDP figures for Vietnam in Q3 2024?"},
+    {"label": "🟠 Conflicting — VERIFY",     "q": "Some sources say vaccines cause autism. Is this scientifically supported?"},
+    {"label": "🟣 Ambiguous — CLARIFY",      "q": "What did he say at the meeting?"},
+    {"label": "🔴 Unknowable — ABSTAIN",     "q": "I cannot answer this."},
 ]
 
 COLORS = {"answer": "#4caf50", "retrieve": "#2196f3", "verify": "#ff9800", "clarify": "#9c27b0", "abstain": "#f44336"}
@@ -149,17 +151,35 @@ if page == "① Agent Demo":
 
     with right:
         st.markdown('<div class="sec">Final Answer</div>', unsafe_allow_html=True)
-        ans = data.get("final_answer") or "*(No direct answer)*"
-        source_map = {
-            "answer":   ("🧠", "From model knowledge",       "#4caf50"),
-            "retrieve": ("📚", "From retrieved evidence",    "#2196f3"),
-            "verify":   ("✓",  "Verified against evidence",  "#ff9800"),
-            "clarify":  ("❓", "Clarification requested",    "#9c27b0"),
-            "abstain":  ("🚫", "Abstained — too uncertain",  "#f44336"),
-        }
-        icon, src_label, src_color = source_map.get(action, ("🧠", "Model", "#888"))
-        st.markdown(f'<div style="font-size:0.78rem;color:{src_color};margin-bottom:6px">{icon} {src_label}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="ans-box">{ans}</div>', unsafe_allow_html=True)
+        if action == "clarify":
+            cq = data.get("clarifying_question") or "Could you please provide more context?"
+            st.markdown(f'<div style="font-size:0.78rem;color:#9c27b0;margin-bottom:6px">❓ Clarification needed</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="ans-box" style="border-color:#9c27b0;color:#ce93d8">{cq}</div>', unsafe_allow_html=True)
+            clarification = st.text_input(
+                "Your clarification:",
+                key="clarification_input",
+                placeholder="Provide more context and press Enter…"
+            )
+            if st.button("▶  Re-run with clarification", key="rerun_clarify") and clarification.strip():
+                refined_q = f"{data['question']} ({clarification.strip()})"
+                with st.spinner("Agent is reasoning with your clarification…"):
+                    new_data, new_err = call_api(refined_q)
+                if new_err:
+                    st.error(f"API error: {new_err}")
+                else:
+                    st.session_state["last_result"] = new_data
+                    st.rerun()
+        else:
+            source_map = {
+                "answer":   ("🧠", "From model knowledge",      "#4caf50"),
+                "retrieve": ("📚", "From retrieved evidence",   "#2196f3"),
+                "verify":   ("✓",  "Verified against evidence", "#ff9800"),
+                "abstain":  ("🚫", "Abstained — too uncertain",  "#f44336"),
+            }
+            icon, src_label, src_color = source_map.get(action, ("🧠", "Model", "#888"))
+            ans = data.get("final_answer") or "*(No direct answer)*"
+            st.markdown(f'<div style="font-size:0.78rem;color:{src_color};margin-bottom:6px">{icon} {src_label}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="ans-box">{ans}</div>', unsafe_allow_html=True)
         eff = data["efficiency"]
         c1, c2, c3 = st.columns(3)
         c1.metric("LLM Calls", eff["llm_calls"])
@@ -197,7 +217,6 @@ if page == "① Agent Demo":
             f'</div>', unsafe_allow_html=True)
 
     # Action scores bar chart
-    import pandas as pd, altair as alt
     df_scores = pd.DataFrame([
         {"action": a.upper(), "score": s, "color": COLORS.get(a, "#888")}
         for a, s in scores.items()
@@ -226,11 +245,10 @@ if page == "① Agent Demo":
     radar = alt.Chart(df_sig).mark_bar(cornerRadiusEnd=4).encode(
         x=alt.X("value:Q", scale=alt.Scale(domain=[0, 1]), title="Score"),
         y=alt.Y("signal:N", sort="-x", title=None),
-        color=alt.condition(
-            alt.datum.value > 0.6,
-            alt.value("#f44336"),
-            alt.condition(alt.datum.value > 0.3, alt.value("#ff9800"), alt.value("#4caf50"))
-        ),
+        color=alt.Color("value:Q", scale=alt.Scale(
+            domain=[0, 0.3, 0.6, 1.0],
+            range=["#4caf50", "#4caf50", "#ff9800", "#f44336"]
+        ), legend=None),
         tooltip=["signal", "value"]
     ).properties(height=220, title="Uncertainty & Evidence Signals (0–1)")
     st.altair_chart(radar, use_container_width=True)
@@ -317,7 +335,6 @@ elif page == "② Decision Trace":
                 f'</div>', unsafe_allow_html=True)
 
         # Signal vs threshold chart for this query
-        import pandas as pd, altair as alt
         sig_df = pd.DataFrame([
             {"signal": k, "value": round(v, 3)}
             for k, v in signals.items()
@@ -325,11 +342,10 @@ elif page == "② Decision Trace":
         sig_chart = alt.Chart(sig_df).mark_bar(cornerRadiusEnd=3).encode(
             x=alt.X("value:Q", scale=alt.Scale(domain=[0, 1]), title="Value"),
             y=alt.Y("signal:N", sort="-x", title=None),
-            color=alt.condition(
-                alt.datum.value > 0.6,
-                alt.value("#f44336"),
-                alt.condition(alt.datum.value > 0.3, alt.value("#ff9800"), alt.value("#4caf50"))
-            ),
+            color=alt.Color("value:Q", scale=alt.Scale(
+                domain=[0, 0.3, 0.6, 1.0],
+                range=["#4caf50", "#4caf50", "#ff9800", "#f44336"]
+            ), legend=None),
             tooltip=["signal", "value"]
         ).properties(height=220, title="Signal Values for This Query")
         st.altair_chart(sig_chart, use_container_width=True)
@@ -339,7 +355,11 @@ elif page == "② Decision Trace":
     st.markdown(f'<div class="ans-box" style="color:#888">{data.get("candidate_answer","—")}</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="sec">Final Answer (after action)</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="ans-box">{data.get("final_answer") or "*(abstained / clarification requested)*"}</div>', unsafe_allow_html=True)
+    if data.get("action") == "clarify":
+        cq = data.get("clarifying_question") or "Could you please provide more context?"
+        st.markdown(f'<div class="ans-box" style="border-color:#9c27b0;color:#ce93d8">❓ {cq}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="ans-box">{data.get("final_answer") or "*(abstained)*"}</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="sec">Raw Trace</div>', unsafe_allow_html=True)
     st.code(data.get("trace", ""), language=None)
@@ -366,8 +386,6 @@ elif page == "③ Research Metrics":
                    "fixed_threshold": "#9c27b0"}
 
     present = [s for s in SYSTEMS if s in metrics]
-
-    import pandas as pd, altair as alt
 
     # ── Tier 1 ────────────────────────────────────────────────────────────────
     st.markdown("---")
@@ -498,12 +516,14 @@ elif page == "③ Research Metrics":
             relev = m["ragas_answer_relevancy"]
             best_f = faith == max(metrics[s]["ragas_faithfulness"] for s in ragas_present if metrics[s].get("ragas_faithfulness") is not None)
             best_r = relev == max(metrics[s]["ragas_answer_relevancy"] for s in ragas_present if metrics[s].get("ragas_answer_relevancy") is not None)
+            faith_color = "#4caf50" if best_f else "#e0e0e0"
+            relev_color = "#4caf50" if best_r else "#e0e0e0"
             rcols[i].markdown(
                 f'<div class="mc" style="border-top:3px solid {c}">'
                 f'<div style="font-size:0.78rem;color:{c};font-weight:700;margin-bottom:8px">{LABELS[sys]}</div>'
-                f'<div class="mv" style="color:{"#4caf50" if best_f else "#e0e0e0"}">{faith:.3f}</div>'
+                f'<div class="mv" style="color:{faith_color}">{faith:.3f}</div>'
                 f'<div class="ml">Faithfulness ↑</div>'
-                f'<div style="margin-top:10px;font-size:0.85rem;color:{"#4caf50" if best_r else "#e0e0e0"}">{relev:.3f}</div>'
+                f'<div style="margin-top:10px;font-size:0.85rem;color:{relev_color}">{relev:.3f}</div>'
                 f'<div class="ml">Answer Relevancy ↑</div>'
                 f'</div>', unsafe_allow_html=True)
     else:
@@ -524,14 +544,19 @@ elif page == "③ Research Metrics":
             relev  = m.get("deepeval_answer_relevancy")
             best_g = geval is not None and geval == max((metrics[s].get("deepeval_geval_correctness") or 0) for s in de_present)
             best_h = halluc is not None and halluc == min((metrics[s].get("deepeval_hallucination") or 1) for s in de_present)
+            geval_color  = "#4caf50" if best_g else "#e0e0e0"
+            halluc_color = "#4caf50" if best_h else "#e0e0e0"
+            geval_str    = f"{geval:.3f}"  if geval  is not None else "n/a"
+            halluc_str   = f"{halluc:.3f}" if halluc is not None else "n/a"
+            relev_str    = f"{relev:.3f}"  if relev  is not None else "n/a"
             dcols[i].markdown(
                 f'<div class="mc" style="border-top:3px solid {c}">'
                 f'<div style="font-size:0.78rem;color:{c};font-weight:700;margin-bottom:8px">{LABELS[sys]}</div>'
-                f'<div class="mv" style="color:{"#4caf50" if best_g else "#e0e0e0"}">{geval:.3f if geval is not None else "n/a"}</div>'
+                f'<div class="mv" style="color:{geval_color}">{geval_str}</div>'
                 f'<div class="ml">GEval Correctness ↑</div>'
-                f'<div style="margin-top:10px;font-size:0.85rem;color:{"#4caf50" if best_h else "#e0e0e0"}">{halluc:.3f if halluc is not None else "n/a"}</div>'
+                f'<div style="margin-top:10px;font-size:0.85rem;color:{halluc_color}">{halluc_str}</div>'
                 f'<div class="ml">Hallucination Score ↓</div>'
-                f'<div style="margin-top:6px;font-size:0.82rem;color:#aaa">{relev:.3f if relev is not None else "n/a"}</div>'
+                f'<div style="margin-top:6px;font-size:0.82rem;color:#aaa">{relev_str}</div>'
                 f'<div class="ml">Answer Relevancy ↑</div>'
                 f'</div>', unsafe_allow_html=True)
     else:
@@ -543,10 +568,8 @@ elif page == "③ Research Metrics":
     st.caption("As the uncertainty threshold increases, retrieval rate drops but so does accuracy. The optimal threshold balances both.")
     sweep_path = os.path.join(DATA_DIR, "threshold_sweep_results.json")
     if os.path.exists(sweep_path):
-        import pandas as pd
         sweep = json.load(open(sweep_path))
         df_sweep = pd.DataFrame(sweep)
-        import altair as alt
         base = alt.Chart(df_sweep).encode(x=alt.X("threshold:Q", title="Uncertainty Threshold"))
         acc_line = base.mark_line(color="#2196f3", strokeWidth=2).encode(
             y=alt.Y("accuracy:Q", title="Value", scale=alt.Scale(domain=[0, 1])),
@@ -581,14 +604,13 @@ elif page == "③ Research Metrics":
             {"Condition": signal_labels.get(k, k), "Accuracy": v, "Delta": v - baseline, "is_base": k == "full_model"}
             for k, v in ablation.items()
         ])
+        df_ab["bar_color"] = df_ab.apply(
+            lambda r: "#2196f3" if r["is_base"] else ("#4caf50" if r["Delta"] >= 0 else "#f44336"), axis=1
+        )
         ab_chart = alt.Chart(df_ab).mark_bar(cornerRadiusEnd=4).encode(
             x=alt.X("Accuracy:Q", scale=alt.Scale(domain=[0, 1]), title="Action Accuracy"),
             y=alt.Y("Condition:N", sort="-x", title=None),
-            color=alt.condition(
-                alt.datum.is_base,
-                alt.value("#2196f3"),
-                alt.condition(alt.datum.Delta >= 0, alt.value("#4caf50"), alt.value("#f44336"))
-            ),
+            color=alt.Color("bar_color:N", scale=None, legend=None),
             tooltip=["Condition", alt.Tooltip("Accuracy:Q", format=".1%"), alt.Tooltip("Delta:Q", format="+.1%")]
         ).properties(height=220, title="Ablation: Action Accuracy per Signal Removed")
         rule = alt.Chart(pd.DataFrame([{"x": baseline}])).mark_rule(strokeDash=[4, 2], color="#555").encode(x="x:Q")
@@ -599,7 +621,6 @@ elif page == "③ Research Metrics":
     # ── Summary table ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Full Comparison Table")
-    import pandas as pd
     rows = []
     for sys in present:
         m = metrics[sys]

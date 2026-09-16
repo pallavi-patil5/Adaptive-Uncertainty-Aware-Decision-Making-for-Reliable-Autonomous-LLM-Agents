@@ -85,6 +85,7 @@ def query_agent(request: QueryRequest):
         },
         "trace":            result.get("trace", ""),
         "candidate_answer": features.get("candidate_answer", ""),
+        "clarifying_question": result.get("clarifying_question"),
     }
 
 
@@ -114,7 +115,7 @@ def get_eval_metrics():
             acc = r.get("acceptable_answers", [])
             if not gt and not acc:
                 continue
-            pred       = r["result"].get("final_answer", "")
+            pred       = r["result"].get("final_answer") or ""
             candidates = acc if acc else ([gt] if gt else [])
             hit        = any(c.lower() in pred.lower() for c in candidates if c)
             correct   += int(hit)

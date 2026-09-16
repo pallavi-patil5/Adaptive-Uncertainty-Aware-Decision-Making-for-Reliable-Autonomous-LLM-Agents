@@ -4,9 +4,28 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from llm_client import call_llm
 
+# Unresolved pronouns / demonstratives that make a question definitively ambiguous
+_AMBIGUOUS_REFS = re.compile(
+    r"\b(he|she|they|it|this|that|these|those|him|her|them|his|hers|its|their)\b",
+    re.IGNORECASE
+)
+_VAGUE_REFS = re.compile(
+    r"\b(the meeting|the report|the event|the project|the document|the file|the case|the issue)\b",
+    re.IGNORECASE
+)
 
 
 def ambiguity_score(question: str) -> dict:
+    # Rule-based fast path: unresolved pronoun or vague definite reference → high ambiguity
+    words = question.split()
+    has_pronoun = bool(_AMBIGUOUS_REFS.search(question))
+    has_vague_ref = bool(_VAGUE_REFS.search(question))
+    # Only trigger if the question is short (no named entity to resolve the pronoun)
+    named_entity_likely = any(w[0].isupper() for w in words if len(w) > 2 and w not in ("What", "Who", "When", "Where", "Why", "How", "Is", "Are", "Was", "Were", "Did", "Do", "Does"))
+    if (has_pronoun or has_vague_ref) and not named_entity_likely:
+        reason = "Contains unresolved pronoun or vague reference that the user could clarify."
+        return {"ambiguity": 0.9, "reasoning": reason}
+
     prompt = (
         f"Question: {question}\n\n"
         "A question is AMBIGUOUS only if clarifying with the user could actually resolve it, "

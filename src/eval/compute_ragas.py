@@ -10,6 +10,7 @@ from datasets import Dataset
 from ragas import evaluate
 from ragas.metrics import faithfulness, answer_relevancy
 from ragas.run_config import RunConfig
+from langchain_groq import ChatGroq
 from langchain_ollama import ChatOllama
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
@@ -19,7 +20,16 @@ LOG_PATH = "data/processed/eval_results.jsonl"
 OUT_PATH = "data/processed/ragas_results.json"
 
 RETRIEVE_ACTIONS = {"retrieve", "verify"}
-OLLAMA_MODEL     = "llama3:8b"
+GROQ_MODEL   = "llama3-8b-8192"
+OLLAMA_MODEL = "llama3:8b"
+
+
+def _make_llm():
+    """Groq-first, Ollama fallback."""
+    try:
+        return LangchainLLMWrapper(ChatGroq(model=GROQ_MODEL, temperature=0))
+    except Exception:
+        return LangchainLLMWrapper(ChatOllama(model=OLLAMA_MODEL, temperature=0))
 
 
 def build_ragas_dataset(rows, system):
@@ -64,7 +74,7 @@ def build_ragas_dataset(rows, system):
 def run_ragas():
     rows = [json.loads(l) for l in open(LOG_PATH, encoding="utf-8")]
 
-    llm        = LangchainLLMWrapper(ChatOllama(model=OLLAMA_MODEL, temperature=0))
+    llm        = _make_llm()
     embeddings = LangchainEmbeddingsWrapper(
         HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     )

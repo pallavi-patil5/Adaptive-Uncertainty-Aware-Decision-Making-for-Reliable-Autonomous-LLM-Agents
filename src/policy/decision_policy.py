@@ -47,9 +47,9 @@ def estimate_reliability(features: dict) -> dict:
         "answer": (1 - uncertainty) * (1 - contradiction) * (1 - ambiguity) * (1 - 0.3 * complexity),
         # not gated by evidence_coverage — retrieve is the action that fetches evidence
         "retrieve": retrieve_signal,
-        # gated by evidence_coverage: verify only makes sense when evidence already exists
-        "verify": contradiction * evidence_coverage,
-        "clarify": ambiguity,
+        # triggered by high contradiction OR high uncertainty on a non-trivial question
+        "verify": max(contradiction, 0.5 * uncertainty) * (1 - ambiguity) * (1 - 0.3 * (1 - complexity)),
+        "clarify": ambiguity * (1 + ambiguity),  # quadratic boost so high ambiguity clearly wins
         # abstain only when uncertain AND simple (low complexity) AND no evidence available
         # high-complexity uncertain questions should retrieve, not give up
         "abstain": uncertainty * (1 - complexity) * (1 - evidence_coverage),

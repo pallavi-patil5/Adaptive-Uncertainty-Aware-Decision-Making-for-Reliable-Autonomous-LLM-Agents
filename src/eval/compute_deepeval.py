@@ -19,7 +19,26 @@ LOG_PATH = "data/processed/eval_results.jsonl"
 OUT_PATH = "data/processed/deepeval_results.json"
 
 RETRIEVE_ACTIONS = {"retrieve", "verify"}
-OLLAMA_MODEL     = "llama3:8b"
+GROQ_MODEL   = "llama3-8b-8192"
+OLLAMA_MODEL = "llama3:8b"
+
+
+def _call_judge(prompt: str) -> str:
+    """Groq-first, Ollama fallback."""
+    try:
+        from groq import Groq
+        client = Groq(api_key=os.environ["GROQ_API_KEY"])
+        return client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+        ).choices[0].message.content
+    except Exception:
+        return _ollama.chat(
+            model=OLLAMA_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0},
+        )["message"]["content"]
 
 
 class OllamaJudge(DeepEvalBaseLLM):
@@ -28,14 +47,10 @@ class OllamaJudge(DeepEvalBaseLLM):
     It then parses the returned STRING as JSON itself via trimAndLoadJson.
     So generate() must always return a JSON string whose keys match the schema fields.
     """
-    def load_model(self): return OLLAMA_MODEL
+    def load_model(self): return GROQ_MODEL
 
     def generate(self, prompt: str, schema=None) -> str:
-        raw = _ollama.chat(
-            model=OLLAMA_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0},
-        )["message"]["content"]
+        raw = _call_judge(prompt)
 
         if schema is None:
             return raw
@@ -59,7 +74,7 @@ class OllamaJudge(DeepEvalBaseLLM):
         return self.generate(prompt, schema=schema)
 
     def get_model_name(self) -> str:
-        return OLLAMA_MODEL
+        return GROQ_MODEL
 
 
 def _extract_json(text: str) -> dict | None:
