@@ -40,10 +40,10 @@ st.markdown("""
 
 DEMOS = [
     {"label": "🟢 Certain — ANSWER",        "q": "What is the capital of France?"},
-    {"label": "🔵 Knowledge gap — RETRIEVE", "q": "What were the exact GDP figures for Vietnam in Q3 2024?"},
-    {"label": "🟠 Conflicting — VERIFY",     "q": "Some sources say vaccines cause autism. Is this scientifically supported?"},
+    {"label": "🔵 Knowledge gap — RETRIEVE", "q": "Who won the 2024 Australian Open men's singles?"},
+    {"label": "🟠 Conflicting — VERIFY",     "q": "Is it true that Einstein failed math as a child?"},
     {"label": "🟣 Ambiguous — CLARIFY",      "q": "What did he say at the meeting?"},
-    {"label": "🔴 Unknowable — ABSTAIN",     "q": "I cannot answer this."},
+    {"label": "🔴 Unknowable — ABSTAIN",     "q": "What was the exact color of the shirt worn by a random person in Pune yesterday?"},
 ]
 
 COLORS = {"answer": "#4caf50", "retrieve": "#2196f3", "verify": "#ff9800", "clarify": "#9c27b0", "abstain": "#f44336"}
@@ -78,7 +78,17 @@ def call_api(q):
         return None, str(e)
 
 
-def load_metrics():
+def call_clarify_followup(original_q, clarification):
+    try:
+        r = requests.post(f"{API_URL}/clarify_followup",
+                          json={"original_question": original_q, "clarification": clarification},
+                          timeout=180)
+        r.raise_for_status()
+        return r.json(), None
+    except Exception as e:
+        return None, str(e)
+
+
     try:
         r = requests.get(f"{API_URL}/eval_metrics", timeout=10)
         r.raise_for_status()

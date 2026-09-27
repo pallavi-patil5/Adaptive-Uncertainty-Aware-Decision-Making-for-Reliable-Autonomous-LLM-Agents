@@ -1,5 +1,5 @@
 # src/policy/feature_extractor.py
-import sys, os
+import sys, os, re
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from uncertainty.combine import uncertainty_score
@@ -9,6 +9,14 @@ from signals.evidence_support import evidence_support_score
 from signals.contradiction import contradiction_score
 from signals.ambiguity import ambiguity_score
 from signals.complexity import complexity_score
+
+# Questions phrased as claims to verify — model should verify regardless of confidence
+_CLAIM_CHECK_PATTERN = re.compile(
+    r"^(is it true|is it a fact|is the claim|did .{1,40} really|was .{1,40} really|"
+    r"is .{1,40} really|are .{1,40} really|does .{1,40} really|is the myth|is the rumou?r|"
+    r"fact or (fiction|myth)|true or false|myth or fact)",
+    re.IGNORECASE
+)
 
 
 def extract_features(question: str, n_consistency_samples: int = 5) -> dict:
@@ -26,23 +34,27 @@ def extract_features(question: str, n_consistency_samples: int = 5) -> dict:
     # Week 3 signals
     
 
-    RELEVANCE_DISTANCE_THRESHOLD = 0.6  # must match evidence_retrieval.py default
+    RELEVANCE_DISTANCE_THRESHOLD = 0.75  # for evidence_coverage calculation
+    NLI_DISTANCE_THRESHOLD = 0.60        # tighter gate for NLI — only run on genuinely close docs
 
-    ret = retrieval_signals(question, k=3)
+    ret = retrieval_signals(question, k=3, relevance_distance_threshold=RELEVANCE_DISTANCE_THRESHOLD)
     evidence_coverage = ret["evidence_coverage"]
     top1_distance = ret["top1_distance"] if ret["top1_distance"] is not None else 1.0
 
     evidence_relevant = False
     support_score = None
     contradiction_probs = {"contradiction": 0.0, "entailment": 0.0, "neutral": 1.0}
-    if ret["retrieved_docs"] and top1_distance < RELEVANCE_DISTANCE_THRESHOLD:
+    if ret["retrieved_docs"] and top1_distance < NLI_DISTANCE_THRESHOLD:
         evidence_relevant = True
         top_doc_text = ret["retrieved_docs"][0]["text"]
         support_score = evidence_support_score(question, answer, top_doc_text)
-        contradiction_probs = contradiction_score(top_doc_text, answer)
+        # Only run NLI if cross-encoder confirms doc is topically relevant (support > 0.5)
+        if support_score > 0.5:
+            contradiction_probs = contradiction_score(top_doc_text, answer)
     
     amb = ambiguity_score(question)
     comp = complexity_score(question)
+    is_claim_check = bool(_CLAIM_CHECK_PATTERN.match(question))
 
     return {
         "question": question,
@@ -62,6 +74,7 @@ def extract_features(question: str, n_consistency_samples: int = 5) -> dict:
 
         "ambiguity": amb["ambiguity"],
         "complexity": comp["complexity"],
+        "is_claim_check": is_claim_check,
     }
 
 

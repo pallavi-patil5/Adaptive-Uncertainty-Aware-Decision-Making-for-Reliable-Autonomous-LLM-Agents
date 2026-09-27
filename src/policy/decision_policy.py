@@ -1,15 +1,7 @@
 # src/policy/decision_policy.py
 # Lambda empirically tuned via lambda_sweep.py: best action_accuracy at 0.05
-# Lower lambda = lower cost penalty = more willing to retrieve/verify
 LAMBDA = 0.05
 
-# Costs calibrated from Tier 4 empirical averages (avg_llm_calls per action):
-#   answer  ~1.0 LLM call
-#   clarify ~1.0 LLM call
-#   retrieve ~1.3 LLM calls (1 generate + occasional rerank)
-#   verify  ~1.6 LLM calls (generate + verification pass)
-#   abstain  0 LLM calls
-# Normalised relative to answer=1.0
 ACTION_COSTS = {
     "answer": 1.0,
     "retrieve": 1.3,
@@ -20,39 +12,35 @@ ACTION_COSTS = {
 
 
 def estimate_reliability(features: dict) -> dict:
-    """Per-action reliability estimates, per the documented formal objective.
-
-    Key design decisions:
-    - retrieve is driven by uncertainty + complexity alone, NOT gated by evidence_coverage.
-      evidence_coverage is 0 before retrieval happens — gating on it creates a catch-22
-      where retrieve can never win on questions with no pre-cached evidence.
-    - verify IS gated by evidence_coverage: it only makes sense after evidence exists.
-    - abstain requires BOTH high uncertainty AND low complexity (simple question the model
-      genuinely doesn't know). High-complexity uncertain questions should retrieve, not abstain.
-    """
     uncertainty = features["uncertainty"]
     contradiction = features["contradiction_prob"]
     ambiguity = features["ambiguity"]
     evidence_coverage = features["evidence_coverage"]
     complexity = features.get("complexity", 0.0)
+    self_eval_unc = features.get("self_eval_uncertainty", uncertainty)
+    is_claim_check = features.get("is_claim_check", False)
 
-    # retrieve signal: uncertain OR complex question — attempt retrieval regardless of
-    # whether corpus already has evidence (retrieval is the action that *produces* evidence).
-    # Complexity weight is 0.7 for high-complexity questions (multi-hop, specific facts)
-    # because the model is frequently confidently wrong on these even at low uncertainty.
     complexity_weight = 0.7 if complexity >= 0.4 else 0.5
     retrieve_signal = (1 - complexity_weight) * uncertainty + complexity_weight * complexity
 
+    # verify fires on:
+    #   (a) high contradiction from NLI against retrieved evidence
+    #   (b) is_claim_check=True — question explicitly asks to verify a claim/myth
+    #       boosted to 0.9 so it beats answer even when model is confident
+    claim_signal = 0.9 if is_claim_check else 0.0
+    verify_base = max(contradiction, claim_signal)
+    # no complexity dampening for claim-check — always worth verifying a stated claim
+    complexity_damp = 0.0 if is_claim_check else (1 - 0.2 * (1 - complexity))
+    verify_rel = verify_base * (1 - ambiguity) * (1 - complexity_damp) + 0.2 * contradiction if not is_claim_check else verify_base * (1 - ambiguity)
+
     return {
         "answer": (1 - uncertainty) * (1 - contradiction) * (1 - ambiguity) * (1 - 0.3 * complexity),
-        # not gated by evidence_coverage — retrieve is the action that fetches evidence
         "retrieve": retrieve_signal,
-        # triggered by high contradiction OR high uncertainty on a non-trivial question
-        "verify": max(contradiction, 0.5 * uncertainty) * (1 - ambiguity) * (1 - 0.3 * (1 - complexity)),
-        "clarify": ambiguity * (1 + ambiguity),  # quadratic boost so high ambiguity clearly wins
-        # abstain only when uncertain AND simple (low complexity) AND no evidence available
-        # high-complexity uncertain questions should retrieve, not give up
-        "abstain": uncertainty * (1 - complexity) * (1 - evidence_coverage),
+        "verify": verify_rel,
+        "clarify": ambiguity * (1 + 0.4 * ambiguity),
+        # abstain: uncertain AND simple AND unambiguous
+        # NOT gated by evidence_coverage — irrelevant vector store hits must not suppress abstain
+        "abstain": uncertainty * (1 - complexity) * (1 - ambiguity),
     }
 
 
@@ -71,11 +59,16 @@ if __name__ == "__main__":
 
     for q in [
         "What is the capital of France?",
+        "Is it true that Einstein failed math as a child?",
         "What does 'the meeting' refer to, and when is it?",
         "What was the exact color of the shirt worn by a random person in Pune yesterday?",
+        "Who won the 2024 US Presidential election?",
     ]:
         features = extract_features(q)
         decision = decide_action(features)
         print(f"\nQ: {q}")
+        print(f"  self_eval_unc={features.get('self_eval_uncertainty', 'N/A'):.3f}  "
+              f"contradiction={features['contradiction_prob']:.3f}  "
+              f"ambiguity={features['ambiguity']:.3f}")
         print(f"  -> action: {decision['action']}")
         print(f"  -> scores: { {k: round(v, 3) for k, v in decision['scores'].items()} }")

@@ -124,7 +124,7 @@ def node_post_retrieve_decide(state: AgentState) -> AgentState:
     contra = contradiction_score(top_doc, state["features"]["candidate_answer"])
     contradiction_prob = contra["contradiction"]
 
-    post_action = "verify" if contradiction_prob > 0.3 else "answer_with_context"
+    post_action = "verify" if contradiction_prob > 0.2 else "answer_with_context"
     return {**state, "decision": {**state["decision"], "post_retrieve_action": post_action,
                                    "post_retrieve_contradiction": contradiction_prob}}
 

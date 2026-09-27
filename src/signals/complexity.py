@@ -3,7 +3,7 @@ import re
 
 MULTI_HOP_CUES = [
     "who was", "where was", "which", "compared to", "before", "after",
-    "same", "both", "difference between", "what was", "when did", "how did",
+    "same", "both", "difference between", "when did", "how did",
     "what caused", "why did", "in what", "at what",
 ]
 
