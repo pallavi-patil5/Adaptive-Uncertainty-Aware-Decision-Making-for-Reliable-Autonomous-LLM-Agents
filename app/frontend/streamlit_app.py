@@ -89,6 +89,7 @@ def call_clarify_followup(original_q, clarification):
         return None, str(e)
 
 
+def load_metrics():
     try:
         r = requests.get(f"{API_URL}/eval_metrics", timeout=10)
         r.raise_for_status()
@@ -171,9 +172,8 @@ if page == "① Agent Demo":
                 placeholder="Provide more context and press Enter…"
             )
             if st.button("▶  Re-run with clarification", key="rerun_clarify") and clarification.strip():
-                refined_q = f"{data['question']} ({clarification.strip()})"
                 with st.spinner("Agent is reasoning with your clarification…"):
-                    new_data, new_err = call_api(refined_q)
+                    new_data, new_err = call_clarify_followup(data["question"], clarification.strip())
                 if new_err:
                     st.error(f"API error: {new_err}")
                 else:

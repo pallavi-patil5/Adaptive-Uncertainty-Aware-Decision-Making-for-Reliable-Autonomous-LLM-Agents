@@ -23,6 +23,78 @@ class QueryRequest(BaseModel):
     question: str
 
 
+class ClarifyFollowupRequest(BaseModel):
+    original_question: str
+    clarification: str
+
+
+@app.post("/clarify_followup")
+def clarify_followup(request: ClarifyFollowupRequest):
+    import time as _time
+    resolved_q = f"{request.original_question} {request.clarification.strip()}"
+    state = graph.invoke({
+        "question": resolved_q,
+        "features": None, "decision": None,
+        "result": None, "evidence": None,
+        "llm_calls": 0, "retrieval_calls": 0,
+        "start_time": _time.monotonic(),
+    })
+
+    features = state["features"]
+    decision = state["decision"]
+    result   = state["result"]
+    evidence = state.get("evidence") or {}
+
+    # User already clarified — if policy still picks clarify, override to answer
+    if decision["action"] == "clarify":
+        from policy.actions import action_answer
+        decision = {**decision, "action": "answer"}
+        result = action_answer(resolved_q, features["candidate_answer"])
+        result["llm_calls"] = state.get("llm_calls", 0)
+        result["retrieval_calls"] = state.get("retrieval_calls", 0)
+        result["latency_s"] = max(0.0, round(_time.monotonic() - state.get("start_time", _time.monotonic()), 3))
+
+    retrieved_docs = evidence.get("retrieved_docs", [])
+    evidence_chunks = [
+        {"text": d["text"][:300], "distance": round(d["distance"], 4), "relevant": d["distance"] < 0.6}
+        for d in retrieved_docs
+    ]
+
+    return {
+        "question":          resolved_q,
+        "action":            decision["action"],
+        "final_answer":      result.get("final_answer"),
+        "signals": {
+            "uncertainty":        round(features["uncertainty"], 3),
+            "self_consistency":   round(features["self_consistency_uncertainty"], 3),
+            "self_eval":          round(features["self_eval_uncertainty"], 3),
+            "ambiguity":          round(features["ambiguity"], 3),
+            "complexity":         round(features.get("complexity", 0), 3),
+            "evidence_coverage":  round(features["evidence_coverage"], 3),
+            "contradiction_prob": round(features["contradiction_prob"], 3),
+            "support_score":      round(features.get("support_score", 0), 3),
+            "top1_distance":      round(features.get("top1_distance", 1.0), 3),
+        },
+        "action_scores":      {k: round(v, 3) for k, v in decision["scores"].items()},
+        "action_reliability": {k: round(v, 3) for k, v in decision["reliability"].items()},
+        "timeline": [
+            {"step": "Clarification Received", "detail": request.clarification},
+            {"step": "Resolved Question",      "detail": resolved_q[:80]},
+            {"step": "Action Selection",       "detail": f"Policy chose: {decision['action'].upper()}  (λ=0.05)"},
+            {"step": "Final Response",         "detail": f"Action={result.get('action','?').upper()}  LLM calls={result.get('llm_calls',0)}"},
+        ],
+        "evidence_chunks":    evidence_chunks,
+        "efficiency": {
+            "llm_calls":       result.get("llm_calls", 0),
+            "retrieval_calls": result.get("retrieval_calls", 0),
+            "latency_s":       result.get("latency_s", 0),
+        },
+        "trace":             result.get("trace", ""),
+        "candidate_answer":  features.get("candidate_answer", ""),
+        "clarifying_question": None,
+    }
+
+
 @app.post("/query")
 def query_agent(request: QueryRequest):
     import time as _time
