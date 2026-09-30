@@ -14,7 +14,8 @@ openai==1.109.1
 # Retrieval & Vector Store
 faiss-cpu==1.15.0
 chromadb==1.5.9
-sentence-transformers==6.0.1
+sentence-transformers==3.4.1
+transformers>=4.41.0,<5.0.0
 
 # Evaluation
 ragas==0.2.15
@@ -24,7 +25,7 @@ scikit-learn==1.9.0
 # ML
 xgboost==3.4.1
 torch==2.14.0
-transformers==5.17.0
+# transformers pinned above by sentence-transformers constraint
 
 # Data
 datasets==5.0.1

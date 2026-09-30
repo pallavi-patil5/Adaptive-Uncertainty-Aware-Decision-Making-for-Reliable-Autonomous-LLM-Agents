@@ -153,6 +153,8 @@ python app/cli_demo.py
 # or
 uvicorn app.backend.main:app --reload
 streamlit run app/frontend/streamlit_app.py
+
+##python -m streamlit run app/frontend/streamlit_app.py                                                                                                         
 ```
 
 ---
