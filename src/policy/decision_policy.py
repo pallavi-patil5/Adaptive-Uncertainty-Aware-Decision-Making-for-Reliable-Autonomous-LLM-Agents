@@ -13,15 +13,25 @@ ACTION_COSTS = {
 
 def estimate_reliability(features: dict) -> dict:
     uncertainty = features["uncertainty"]
-    contradiction = features["contradiction_prob"]
     ambiguity = features["ambiguity"]
-    evidence_coverage = features["evidence_coverage"]
+    evidence_coverage = features.get("evidence_coverage", 0.0)
+    top1_distance = features.get("top1_distance", 1.0)
+    evidence_relevant = features.get(
+        "evidence_relevant",
+        evidence_coverage > 0 and top1_distance < 0.6,
+    )
+    evidence_availability = evidence_coverage if evidence_relevant else 0.0
+    entailment = features.get("entailment_prob", 0.0) if evidence_relevant else 0.0
+    contradiction = features.get("contradiction_prob", 0.0) if evidence_relevant else 0.0
     complexity = features.get("complexity", 0.0)
-    self_eval_unc = features.get("self_eval_uncertainty", uncertainty)
     is_claim_check = features.get("is_claim_check", False)
 
     complexity_weight = 0.7 if complexity >= 0.4 else 0.5
-    retrieve_signal = (1 - complexity_weight) * uncertainty + complexity_weight * complexity
+    retrieve_signal = max(
+        ((1 - complexity_weight) * uncertainty + complexity_weight * complexity)
+        * evidence_availability,
+        entailment,
+    )
 
     # verify fires on:
     #   (a) high contradiction from NLI against retrieved evidence
@@ -34,13 +44,15 @@ def estimate_reliability(features: dict) -> dict:
     verify_rel = verify_base * (1 - ambiguity) * (1 - complexity_damp) + 0.2 * contradiction if not is_claim_check else verify_base * (1 - ambiguity)
 
     return {
-        "answer": (1 - uncertainty) * (1 - contradiction) * (1 - ambiguity) * (1 - 0.3 * complexity),
+        "answer": (
+            (1 - uncertainty) * (1 - contradiction) * (1 - ambiguity)
+            * (1 - 0.3 * complexity)
+            * (1 - 0.5 * evidence_availability * (1 - entailment))
+        ),
         "retrieve": retrieve_signal,
         "verify": verify_rel,
         "clarify": ambiguity * (1 + 0.4 * ambiguity),
-        # abstain: uncertain AND simple AND unambiguous
-        # NOT gated by evidence_coverage — irrelevant vector store hits must not suppress abstain
-        "abstain": uncertainty * (1 - complexity) * (1 - ambiguity),
+        "abstain": uncertainty * (1 - complexity) * (1 - ambiguity) * (1 - entailment),
     }
 
 
