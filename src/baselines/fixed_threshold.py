@@ -5,7 +5,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from baselines.common import CallCounter, make_result
 from vector_store import query as vector_query
 from uncertainty.self_consistency import sample_answers
-from uncertainty.self_eval import p_true_score, p_ik_score
+from uncertainty.self_eval import self_eval_uncertainty
 
 import numpy as np
 from itertools import combinations
@@ -32,11 +32,9 @@ def run(question: str, threshold: float = 0.5, n_consistency_samples: int = 5) -
 
     # --- Self-eval uncertainty (P(True) + P(IK)) ---
     answer = counter.call(f"Question: {question}\nAnswer concisely:", temperature=0.0)
-    p_true = p_true_score(question, answer)
-    counter.count += 1
-    p_ik = p_ik_score(question)
-    counter.count += 1
-    se_uncertainty = 1.0 - (p_true + p_ik) / 2.0
+    se_result = self_eval_uncertainty(question, answer=answer)
+    counter.count += 1  # self_eval_uncertainty makes 1 LLM call
+    se_uncertainty = se_result["uncertainty"]
 
     combined_uncertainty = 0.5 * sc_uncertainty + 0.5 * se_uncertainty
 

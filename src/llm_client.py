@@ -58,6 +58,28 @@ def call_hf(prompt: str, model: str = "Qwen/Qwen2.5-72B-Instruct", temperature: 
     return _call_with_timeout(_call)
 
 
+def _find_ollama_exe() -> str:
+    """Locate the ollama executable cross-platform without hardcoding a path."""
+    import shutil, sys
+    # 1. Honour an explicit override in .env  (OLLAMA_PATH=/custom/path/ollama)
+    env_path = os.environ.get("OLLAMA_PATH")
+    if env_path and os.path.isfile(env_path):
+        return env_path
+    # 2. Find on system PATH (works on any OS after a normal Ollama install)
+    found = shutil.which("ollama")
+    if found:
+        return found
+    # 3. Windows default install location as last resort
+    if sys.platform == "win32":
+        default = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe")
+        if os.path.isfile(default):
+            return default
+    raise RuntimeError(
+        "Ollama executable not found. Install Ollama (https://ollama.com) and ensure it is on your PATH, "
+        "or set OLLAMA_PATH=/path/to/ollama in your .env file."
+    )
+
+
 def _ensure_ollama_running() -> None:
     import time, subprocess, ollama
     try:
@@ -65,7 +87,7 @@ def _ensure_ollama_running() -> None:
         return
     except Exception:
         pass
-    ollama_exe = r"C:\Users\Pallavi\AppData\Local\Programs\Ollama\ollama.exe"
+    ollama_exe = _find_ollama_exe()
     subprocess.Popen([ollama_exe, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(60):
         time.sleep(1)

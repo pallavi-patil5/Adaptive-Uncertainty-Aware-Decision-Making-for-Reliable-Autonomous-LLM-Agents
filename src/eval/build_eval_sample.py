@@ -3,7 +3,7 @@ import sys, os, json, random
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 def build_sample(
-    unified_path="data/processed/unified_dataset.jsonl",
+    unified_path="data/processed/full_decision_dataset.jsonl",
     custom_path="data/processed/custom_decision_dataset.jsonl",
     out_path="data/processed/eval_sample.jsonl",
     per_source=8,
