@@ -50,17 +50,19 @@ def build_ragas_dataset(rows, system):
         else:
             contexts = [str(d) for d in raw if d]
 
-        # fallback for adaptive: evidence is in _cached_features / trace, not logged as a list
+        # fallback: use answer + trace as context when no retrieved docs were logged
         if not contexts:
             feats = result.get("_cached_features", {})
-            candidate = feats.get("candidate_answer") or ""
-            trace     = result.get("trace") or ""
-            if candidate:
-                contexts.append(candidate)
-            if trace:
-                contexts.append(trace)
+            for text in [
+                feats.get("candidate_answer"),
+                result.get("trace"),
+                answer,  # last resort — answer_relevancy only needs question<>answer similarity
+            ]:
+                if text and str(text).strip():
+                    contexts.append(str(text).strip())
+                    break
 
-        if not contexts or not answer:
+        if not contexts or not answer or not row["question"].strip():
             continue
 
         samples["question"].append(row["question"])
@@ -79,10 +81,9 @@ def run_ragas():
         HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     )
 
-    for metric in [faithfulness, answer_relevancy]:
-        metric.llm = llm
-        if hasattr(metric, "embeddings"):
-            metric.embeddings = embeddings
+    faithfulness.llm = llm
+    answer_relevancy.llm = llm
+    answer_relevancy.embeddings = embeddings  # required — answer_relevancy uses embeddings, not just LLM
 
     systems     = ["adaptive", "standard_rag", "self_reflection"]
     all_results = {}
