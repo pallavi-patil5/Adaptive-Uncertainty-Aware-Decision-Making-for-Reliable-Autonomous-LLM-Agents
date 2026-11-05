@@ -8,7 +8,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from datasets import Dataset
 from ragas import evaluate
-from ragas.metrics import faithfulness, answer_relevancy
+from ragas.metrics import faithfulness
 from ragas.run_config import RunConfig
 from langchain_groq import ChatGroq
 from langchain_ollama import ChatOllama
@@ -82,8 +82,6 @@ def run_ragas():
     )
 
     faithfulness.llm = llm
-    answer_relevancy.llm = llm
-    answer_relevancy.embeddings = embeddings  # required — answer_relevancy uses embeddings, not just LLM
 
     systems     = ["adaptive", "standard_rag", "self_reflection"]
     all_results = {}
@@ -98,22 +96,22 @@ def run_ragas():
         try:
             result = evaluate(
                 ds,
-                metrics=[faithfulness, answer_relevancy],
+                metrics=[faithfulness],
                 llm=llm,
                 embeddings=embeddings,
-                run_config=RunConfig(max_retries=3, max_wait=120, timeout=180),
+                run_config=RunConfig(max_retries=2, max_wait=60, timeout=120),
             )
             def _mean(v):
                 arr = np.array(v, dtype=float)
                 return round(float(np.nanmean(arr)), 3)
             scores = {
                 "faithfulness":     _mean(result["faithfulness"]),
-                "answer_relevancy": _mean(result["answer_relevancy"]),
+                "answer_relevancy": None,
                 "n":                len(ds),
             }
             all_results[system] = scores
             print(f"  faithfulness:     {scores['faithfulness']}")
-            print(f"  answer_relevancy: {scores['answer_relevancy']}")
+            print(f"  answer_relevancy: skipped (times out with local Ollama)")
         except Exception as e:
             print(f"  ERROR: {e}")
             all_results[system] = {"error": str(e)}
