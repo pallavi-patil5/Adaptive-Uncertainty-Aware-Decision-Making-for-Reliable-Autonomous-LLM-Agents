@@ -77,6 +77,9 @@ def clarify_followup(request: ClarifyFollowupRequest):
         },
         "action_scores":      {k: round(v, 3) for k, v in decision["scores"].items()},
         "action_reliability": {k: round(v, 3) for k, v in decision["reliability"].items()},
+        "action_blended":     {k: round(v, 3) for k, v in decision["blended"].items()},
+        "xgb_probs":          {k: round(v, 3) for k, v in decision["xgb_probs"].items()} if decision["xgb_probs"] else None,
+        "policy_mode":        decision["mode"],
         "timeline": [
             {"step": "Clarification Received", "detail": request.clarification},
             {"step": "Resolved Question",      "detail": resolved_q[:80]},
@@ -148,6 +151,9 @@ def query_agent(request: QueryRequest):
         },
         "action_scores":     {k: round(v, 3) for k, v in decision["scores"].items()},
         "action_reliability":{k: round(v, 3) for k, v in decision["reliability"].items()},
+        "action_blended":    {k: round(v, 3) for k, v in decision["blended"].items()},
+        "xgb_probs":         {k: round(v, 3) for k, v in decision["xgb_probs"].items()} if decision["xgb_probs"] else None,
+        "policy_mode":       decision["mode"],
         "timeline":          timeline,
         "evidence_chunks":   evidence_chunks,
         "efficiency": {

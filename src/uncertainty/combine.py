@@ -3,18 +3,25 @@ import sys, os
 sys.path.append(os.path.dirname(__file__))
 
 from self_consistency import self_consistency_score
-from self_eval import self_eval_uncertainty
+from self_eval import get_answer, self_eval_uncertainty
 
 
-def uncertainty_score(question: str, n_samples: int = 5, weights: dict | None = None) -> dict:
+def uncertainty_score(question: str, n_samples: int = 2, weights: dict | None = None) -> dict:
     """
-    Combines self-consistency uncertainty + P(True)/P(IK) uncertainty into one score.
-    weights: e.g. {"self_consistency": 0.5, "self_eval": 0.5}
+    Combines self-consistency + P(True)/P(IK) uncertainty.
+
+    LLM call budget per question (down from 9 → 3):
+      1. get_answer          — 1 call  (reused by both signals)
+      2. self_consistency    — 1 extra sample (seed_answer counts as first)
+      3. self_eval combined  — 1 call  (PTRUE + PIK in one prompt)
     """
     weights = weights or {"self_consistency": 0.5, "self_eval": 0.5}
 
-    sc_result = self_consistency_score(question, n=n_samples)
-    se_result = self_eval_uncertainty(question)
+    # Single get_answer call — reused by both signals
+    answer = get_answer(question)
+
+    sc_result = self_consistency_score(question, n=n_samples, seed_answer=answer)
+    se_result = self_eval_uncertainty(question, answer=answer)
 
     combined = (
         weights["self_consistency"] * sc_result["uncertainty"]
@@ -28,7 +35,7 @@ def uncertainty_score(question: str, n_samples: int = 5, weights: dict | None = 
         "self_eval_uncertainty": se_result["uncertainty"],
         "p_true": se_result["p_true"],
         "p_ik": se_result["p_ik"],
-        "answer": se_result["answer"],
+        "answer": answer,
         "samples": sc_result["samples"],
     }
 

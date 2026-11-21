@@ -136,25 +136,30 @@ ollama pull llama3:8b
 ## Usage
 
 ```bash
-# Run the adaptive agent over the evaluation set
-python src/baselines/run_all.py
-
-# Compute all evaluation tiers
+# Run evaluation across all 5 systems
 python src/eval/run_evaluation.py
 
-# RAGAS faithfulness + answer relevancy (uses local Ollama)
+# Compute evaluation tiers
+python src/eval/compute_tier1.py
+python src/eval/compute_tier2.py
+python src/eval/compute_tier3.py
+python src/eval/compute_tier4.py
+
+# RAGAS faithfulness + answer relevancy
 python src/eval/compute_ragas.py
 
 # Ablation study
 python src/eval/ablation_study.py
 
-# Launch the demo
-python app/cli_demo.py
-# or
-uvicorn app.backend.main:app --reload
-streamlit run app/frontend/streamlit_app.py
+# Full summary
+python src/eval/summarize_all.py
 
-##python -m streamlit run app/frontend/streamlit_app.py                                                                                                         
+# Launch the demo (CLI)
+python app/cli_demo.py
+
+# Launch the demo (Web)
+uvicorn app.backend.main:app --reload
+python -m streamlit run app/frontend/streamlit_app.py
 ```
 
 ---

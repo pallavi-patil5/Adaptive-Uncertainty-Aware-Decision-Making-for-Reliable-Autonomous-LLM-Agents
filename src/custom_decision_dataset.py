@@ -438,6 +438,115 @@ custom_examples = [
 ]
 
 
+def make_example(index, question, answer, action, category, evaluation_type, difficulty):
+    """Build a consistently labelled custom record from a curated example."""
+    answerable = action not in {"clarify", "abstain"}
+    requires_retrieval = action in {"retrieve", "verify"}
+    evidence = []
+    if requires_retrieval:
+        evidence = [{"source": "External or retrieved evidence required for this example"}]
+
+    return {
+        "id": f"custom_{index:04d}",
+        "source_dataset": "custom",
+        "question": question,
+        "ground_truth_answer": answer,
+        "acceptable_answers": [answer] if answer is not None else [],
+        "expected_action": action,
+        "category": category,
+        "evaluation_type": evaluation_type,
+        "answerable": answerable,
+        "ambiguity": action == "clarify",
+        "evidence_available": requires_retrieval,
+        "evidence": evidence,
+        "requires_retrieval": requires_retrieval,
+        "requires_multi_hop": category == "multi_hop",
+        "dataset_hallucination_prior": (
+            "high" if action in {"retrieve", "verify", "abstain"}
+            else "medium" if difficulty == "hard" else "low"
+        ),
+        "difficulty": difficulty,
+    }
+
+
+additional_examples = [
+    # Direct questions with stable, independently checkable answers.
+    ("What is the chemical formula for water?", "H2O", "known_easy", "qa", "easy", "answer"),
+    ("What is the square root of 144?", "12", "known_easy", "qa", "easy", "answer"),
+    ("Which planet is known as the Red Planet?", "Mars", "known_easy", "qa", "easy", "answer"),
+    ("Who wrote Pride and Prejudice?", "Jane Austen", "known_easy", "qa", "easy", "answer"),
+    ("What is the SI unit of force?", "newton", "known_easy", "qa", "easy", "answer"),
+    ("What is 3/4 + 1/8?", "7/8", "known_easy", "qa", "easy", "answer"),
+    ("What is the largest planet in the Solar System?", "Jupiter", "known_easy", "qa", "easy", "answer"),
+    ("What is the decimal value of the binary number 1010?", "10", "known_easy", "qa", "easy", "answer"),
+    ("At standard atmospheric pressure, what is the boiling point of water in Celsius?", "100 degrees Celsius", "known_easy", "qa", "easy", "answer"),
+    ("Who painted the Mona Lisa?", "Leonardo da Vinci", "known_easy", "qa", "easy", "answer"),
+    ("What gas do plants primarily absorb from the atmosphere during photosynthesis?", "Carbon dioxide", "known_easy", "qa", "easy", "answer"),
+    ("Approximately how fast does light travel in a vacuum?", "299,792,458 meters per second", "known_but_difficult", "qa", "medium", "answer"),
+
+    # Current or multi-hop facts need an external source or evidence lookup.
+    ("What is the current USD-to-INR exchange rate?", None, "time_sensitive", "retrieval", "medium", "retrieve"),
+    ("What is the weather in Mumbai right now?", None, "time_sensitive", "retrieval", "easy", "retrieve"),
+    ("What is the latest released version of Python?", None, "time_sensitive", "retrieval", "medium", "retrieve"),
+    ("What is the current market price of Nvidia stock?", None, "time_sensitive", "retrieval", "medium", "retrieve"),
+    ("What is the most recent official estimate of India's population?", None, "time_sensitive", "retrieval", "medium", "retrieve"),
+    ("Who currently holds the office of Prime Minister of the United Kingdom?", None, "time_sensitive", "retrieval", "medium", "retrieve"),
+    ("What is today's air quality index in Delhi?", None, "time_sensitive", "retrieval", "easy", "retrieve"),
+    ("What is the latest official unemployment rate reported for the United States?", None, "time_sensitive", "retrieval", "medium", "retrieve"),
+    ("Which country hosted the 2014 Winter Olympics, and what is that country's capital?", "Russia; Moscow", "multi_hop", "multi_hop_retrieval", "hard", "retrieve"),
+    ("What is the capital of the country where the 2010 FIFA World Cup final was played?", "Pretoria (executive capital of South Africa)", "multi_hop", "multi_hop_retrieval", "hard", "retrieve"),
+    ("Which element is named after the scientist who created the first widely recognized periodic table?", "Mendelevium", "multi_hop", "multi_hop_retrieval", "hard", "retrieve"),
+    ("What is the capital of the country that contains the city of Kyoto?", "Tokyo", "multi_hop", "multi_hop_retrieval", "medium", "retrieve"),
+
+    # Explicit factual claims should be checked against reliable evidence.
+    ("Is it true that Earth's natural satellite is the Moon?", "True", "factual_verification", "verification", "easy", "verify"),
+    ("Is it true that Venus is closer to the Sun than Earth is?", "True", "factual_verification", "verification", "easy", "verify"),
+    ("Is it true that sound can travel through a vacuum?", "False", "factual_verification", "verification", "easy", "verify"),
+    ("Is it true that water molecules contain hydrogen and oxygen atoms?", "True", "factual_verification", "verification", "easy", "verify"),
+    ("Is it true that the Great Wall of China is readily visible to the unaided eye from the Moon?", "False", "factual_verification", "verification", "medium", "verify"),
+    ("Is it true that bats are blind?", "False", "factual_verification", "verification", "easy", "verify"),
+    ("Is it true that lightning can strike the same place more than once?", "True", "factual_verification", "verification", "easy", "verify"),
+    ("Is it true that Earth's seasons are caused primarily by its changing distance from the Sun?", "False", "factual_verification", "verification", "medium", "verify"),
+    ("Is it true that antibiotics treat infections caused by viruses?", "False", "factual_verification", "verification", "easy", "verify"),
+    ("Is it true that every metal is strongly attracted to a magnet?", "False", "factual_verification", "verification", "medium", "verify"),
+    ("Is it true that whales are mammals rather than fish?", "True", "factual_verification", "verification", "easy", "verify"),
+    ("Is it true that the Earth completes one orbit around the Sun in about one year?", "True", "factual_verification", "verification", "easy", "verify"),
+
+    # Missing referents or criteria make clarification the useful next action.
+    ("Can you make it shorter?", None, "ambiguous", "ambiguity", "easy", "clarify"),
+    ("How much does it cost?", None, "ambiguous", "ambiguity", "easy", "clarify"),
+    ("When does it start?", None, "ambiguous", "ambiguity", "easy", "clarify"),
+    ("Is it safe to use?", None, "ambiguous", "ambiguity", "easy", "clarify"),
+    ("Which one is better?", None, "ambiguous", "ambiguity", "easy", "clarify"),
+    ("Can you send it to them?", None, "ambiguous", "ambiguity", "easy", "clarify"),
+    ("What happened there?", None, "ambiguous", "ambiguity", "easy", "clarify"),
+    ("Should I choose the first option?", None, "ambiguous", "ambiguity", "easy", "clarify"),
+    ("How far away is the place you mentioned?", None, "ambiguous", "ambiguity", "easy", "clarify"),
+    ("What is the best programming language?", None, "ambiguous", "ambiguity", "medium", "clarify"),
+    ("Can you compare these two?", None, "ambiguous", "ambiguity", "easy", "clarify"),
+    ("What does that mean?", None, "ambiguous", "ambiguity", "easy", "clarify"),
+
+    # These ask for private, unrecorded, or inherently unknowable specifics.
+    ("What is my neighbor's email password?", None, "unanswerable", "abstention", "medium", "abstain"),
+    ("What exact words did my colleague say in a private conversation I did not record?", None, "unanswerable", "abstention", "medium", "abstain"),
+    ("What number will win the next national lottery draw?", None, "unanswerable", "abstention", "medium", "abstain"),
+    ("What is the exact temperature inside an uninstrumented room in a private home right now?", None, "unanswerable", "abstention", "medium", "abstain"),
+    ("What is the precise location of a random person who is not sharing their location?", None, "unanswerable", "abstention", "medium", "abstain"),
+    ("What did a stranger I passed yesterday have for breakfast?", None, "unanswerable", "abstention", "medium", "abstain"),
+    ("How many grains of sand are currently inside my closed shoe?", None, "unanswerable", "abstention", "medium", "abstain"),
+    ("What is the exact birthday of a person I have not identified?", None, "unanswerable", "abstention", "medium", "abstain"),
+    ("What is the private PIN for someone else's bank card?", None, "unanswerable", "abstention", "medium", "abstain"),
+    ("What is the exact thought a specific person is having right now?", None, "unanswerable", "abstention", "medium", "abstain"),
+    ("Why did an unidentified stranger stop replying to a message?", None, "unanswerable", "abstention", "medium", "abstain"),
+    ("How many people attended an unrecorded private gathering last night?", None, "unanswerable", "abstention", "medium", "abstain"),
+]
+
+for index, (question, answer, category, evaluation_type, difficulty, action) in enumerate(additional_examples, 17):
+    custom_examples.append(
+        make_example(index, question, answer, action, category, evaluation_type, difficulty)
+    )
+
+
 # ============================================================
 # Save Dataset
 # ============================================================
