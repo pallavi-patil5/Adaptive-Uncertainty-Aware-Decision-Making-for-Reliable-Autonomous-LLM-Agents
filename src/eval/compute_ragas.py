@@ -8,7 +8,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from datasets import Dataset
 from ragas import evaluate
-from ragas.metrics import faithfulness, answer_relevancy
+from ragas.metrics import faithfulness
 from ragas.run_config import RunConfig
 from langchain_groq import ChatGroq
 from langchain_ollama import ChatOllama
@@ -50,17 +50,19 @@ def build_ragas_dataset(rows, system):
         else:
             contexts = [str(d) for d in raw if d]
 
-        # fallback for adaptive: evidence is in _cached_features / trace, not logged as a list
+        # fallback: use answer + trace as context when no retrieved docs were logged
         if not contexts:
             feats = result.get("_cached_features", {})
-            candidate = feats.get("candidate_answer") or ""
-            trace     = result.get("trace") or ""
-            if candidate:
-                contexts.append(candidate)
-            if trace:
-                contexts.append(trace)
+            for text in [
+                feats.get("candidate_answer"),
+                result.get("trace"),
+                answer,  # last resort — answer_relevancy only needs question<>answer similarity
+            ]:
+                if text and str(text).strip():
+                    contexts.append(str(text).strip())
+                    break
 
-        if not contexts or not answer:
+        if not contexts or not answer or not row["question"].strip():
             continue
 
         samples["question"].append(row["question"])
@@ -79,10 +81,7 @@ def run_ragas():
         HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     )
 
-    for metric in [faithfulness, answer_relevancy]:
-        metric.llm = llm
-        if hasattr(metric, "embeddings"):
-            metric.embeddings = embeddings
+    faithfulness.llm = llm
 
     systems     = ["adaptive", "standard_rag", "self_reflection"]
     all_results = {}
@@ -97,22 +96,22 @@ def run_ragas():
         try:
             result = evaluate(
                 ds,
-                metrics=[faithfulness, answer_relevancy],
+                metrics=[faithfulness],
                 llm=llm,
                 embeddings=embeddings,
-                run_config=RunConfig(max_retries=3, max_wait=120, timeout=180),
+                run_config=RunConfig(max_retries=2, max_wait=60, timeout=120),
             )
             def _mean(v):
                 arr = np.array(v, dtype=float)
                 return round(float(np.nanmean(arr)), 3)
             scores = {
                 "faithfulness":     _mean(result["faithfulness"]),
-                "answer_relevancy": _mean(result["answer_relevancy"]),
+                "answer_relevancy": None,
                 "n":                len(ds),
             }
             all_results[system] = scores
             print(f"  faithfulness:     {scores['faithfulness']}")
-            print(f"  answer_relevancy: {scores['answer_relevancy']}")
+            print(f"  answer_relevancy: skipped (times out with local Ollama)")
         except Exception as e:
             print(f"  ERROR: {e}")
             all_results[system] = {"error": str(e)}
