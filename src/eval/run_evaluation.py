@@ -10,6 +10,7 @@ EVAL_PATH = "data/processed/eval_sample.jsonl"
 LOG_PATH = "data/processed/eval_results.jsonl"
 
 SYSTEMS = ["adaptive", "normal_llm", "standard_rag", "self_reflection", "fixed_threshold"]
+SLEEP_BETWEEN_QUESTIONS = 5  # seconds — reduce heat; increase if laptop still runs hot
 
 
 def load_completed(log_path):
@@ -83,6 +84,8 @@ def run_evaluation():
                 }
                 log_f.write(json.dumps(log_row, ensure_ascii=False) + "\n")
                 log_f.flush()  # ensure it's on disk immediately, not just buffered
+
+        time.sleep(SLEEP_BETWEEN_QUESTIONS)
 
     print("Evaluation run complete.")
 

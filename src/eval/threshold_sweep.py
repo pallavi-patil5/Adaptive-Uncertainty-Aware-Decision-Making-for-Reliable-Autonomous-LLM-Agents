@@ -7,8 +7,20 @@ from vector_store import query as vector_query
 from llm_client import call_llm
 from eval.correctness import is_correct
 
-EVAL_PATH = "data/processed/eval_sample.jsonl"
-THRESHOLDS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+EVAL_PATH    = "data/processed/eval_sample.jsonl"
+CACHE_PATH   = "data/processed/sweep_uncertainty_cache.jsonl"
+RESULTS_PATH = "data/processed/threshold_sweep_results.json"
+THRESHOLDS   = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+
+
+def _load_cache():
+    cache = {}
+    if os.path.exists(CACHE_PATH):
+        with open(CACHE_PATH, encoding="utf-8") as f:
+            for line in f:
+                row = json.loads(line)
+                cache[row["id"]] = row
+    return cache
 
 
 def run_sweep():
@@ -17,18 +29,28 @@ def run_sweep():
         for line in f:
             records.append(json.loads(line))
 
-    # Compute uncertainty ONCE per question — the expensive part
-    cached = []
-    for record in records:
-        unc = uncertainty_score(record["question"])
-        cached.append({"record": record, "uncertainty": unc["combined_uncertainty"], "candidate_answer": unc["answer"]})
-        print(f"Cached uncertainty for: {record['question'][:50]}... -> {unc['combined_uncertainty']:.3f}")
+    # --- Resume-aware uncertainty caching ---
+    cache = _load_cache()
+    print(f"Uncertainty cache: {len(cache)}/{len(records)} already done.")
 
+    with open(CACHE_PATH, "a", encoding="utf-8") as cf:
+        for record in records:
+            if record["id"] in cache:
+                continue
+            unc = uncertainty_score(record["question"])
+            row = {"id": record["id"], "uncertainty": unc["combined_uncertainty"], "candidate_answer": unc["answer"]}
+            cf.write(json.dumps(row) + "\n")
+            cf.flush()
+            cache[record["id"]] = row
+            print(f"  cached [{len(cache)}/{len(records)}] {record['question'][:50]}... -> {unc['combined_uncertainty']:.3f}")
+
+    # --- Threshold sweep (fast, no LLM calls) ---
     results = []
     for threshold in THRESHOLDS:
         correct_count, retrieve_count, total = 0, 0, 0
-        for item in cached:
-            record, uncertainty, candidate = item["record"], item["uncertainty"], item["candidate_answer"]
+        for record in records:
+            item = cache[record["id"]]
+            uncertainty, candidate = item["uncertainty"], item["candidate_answer"]
             total += 1
 
             if uncertainty > threshold:
@@ -50,7 +72,7 @@ def run_sweep():
         results.append({"threshold": threshold, "accuracy": accuracy, "retrieval_rate": retrieval_rate})
         print(f"threshold={threshold}: accuracy={accuracy:.3f}, retrieval_rate={retrieval_rate:.3f}")
 
-    with open("data/processed/threshold_sweep_results.json", "w") as f:
+    with open(RESULTS_PATH, "w") as f:
         json.dump(results, f, indent=2)
 
     return results

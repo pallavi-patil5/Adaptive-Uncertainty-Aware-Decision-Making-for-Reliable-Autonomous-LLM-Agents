@@ -21,8 +21,8 @@ def save(name):
 
 
 # ── 1. Tier 1 — Accuracy & Hallucination Rate ────────────────────────────────
-acc   = [0.528, 0.361, 0.556, 0.389, 0.472]
-halluc= [0.389, 0.639, 0.444, 0.611, 0.528]
+acc   = [0.294, 0.252, 0.360, 0.256, 0.262]
+halluc= [0.509, 0.748, 0.640, 0.744, 0.738]
 
 x = np.arange(len(SYS))
 w = 0.35
@@ -41,9 +41,9 @@ save("tier1_accuracy_hallucination")
 # ── 2. Tier 2 — Calibration (ECE, Brier, AUROC) ─────────────────────────────
 t2_sys  = ["Adaptive", "Fixed Threshold"]
 t2_cols = ["#2196f3", "#9c27b0"]
-ece    = [0.176, 0.251]
-brier  = [0.218, 0.258]
-auroc  = [0.777, 0.706]
+ece    = [0.476, 0.519]
+brier  = [0.430, 0.468]
+auroc  = [0.657, 0.623]
 
 x2 = np.arange(len(t2_sys))
 fig, axes = plt.subplots(1, 3, figsize=(10, 4))
@@ -62,8 +62,8 @@ save("tier2_calibration")
 
 
 # ── 3. Tier 3 — Action Accuracy & Unnecessary Retrieval ─────────────────────
-act_acc = [0.35, 0.43, 0.21, 0.43, 0.39]
-unnec   = [0.055, 0.000, 0.429, 0.000, 0.071]
+act_acc = [0.42, 0.17, 0.40, 0.17, 0.15]
+unnec   = [0.004, 0.000, 0.173, 0.000, 0.039]
 
 x = np.arange(len(SYS))
 fig, ax = plt.subplots(figsize=(10, 5))
@@ -80,9 +80,9 @@ save("tier3_decision_quality")
 
 # ── 4. Tier 3 — Per-action P/R/F1 for Adaptive ──────────────────────────────
 actions = ["answer", "retrieve", "verify", "clarify", "abstain"]
-prec  = [0.47, 0.14, 0.20, 0.33, 0.20]
-rec   = [0.58, 0.08, 0.18, 0.50, 0.17]
-f1    = [0.52, 0.11, 0.19, 0.40, 0.18]
+prec  = [0.40, 0.57, 0.37, 0.37, 0.31]
+rec   = [0.90, 0.29, 0.31, 0.55, 0.16]
+f1    = [0.55, 0.39, 0.34, 0.44, 0.21]
 acols = ["#4caf50","#2196f3","#ff9800","#9c27b0","#f44336"]
 
 x = np.arange(len(actions))
@@ -102,8 +102,8 @@ save("tier3_per_action_prf")
 
 
 # ── 5. Tier 4 — Efficiency ───────────────────────────────────────────────────
-llm_calls = [6.36, 1.00, 1.00, 2.00, 8.21]
-latency   = [5.399, 0.701, 1.209, 3.426, 4.897]
+llm_calls = [6.53, 1.00, 1.00, 2.00, 7.08]
+latency   = [2.356, 0.874, 1.271, 3.198, 4.347]
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5))
 bars1 = ax1.bar(SYS, llm_calls, color=SCOLS, alpha=0.85)
@@ -129,8 +129,8 @@ ax.set_xlabel("Avg LLM Calls (lower = cheaper)")
 ax.set_ylabel("Accuracy (higher = better)")
 ax.set_title("Efficiency Frontier — Accuracy vs Computational Cost")
 ax.set_xlim(0, 10); ax.set_ylim(0, 0.8)
-ax.axvline(6.36, color="#2196f3", linestyle="--", alpha=0.3)
-ax.axhline(0.528, color="#2196f3", linestyle="--", alpha=0.3)
+ax.axvline(6.53, color="#2196f3", linestyle="--", alpha=0.3)
+ax.axhline(0.294, color="#2196f3", linestyle="--", alpha=0.3)
 save("efficiency_frontier")
 
 
@@ -144,7 +144,7 @@ sw_ret     = [r["retrieval_rate"] for r in sweep]
 fig, ax = plt.subplots(figsize=(9, 5))
 ax.plot(thresholds, sw_acc, "o-", color="#2196f3", linewidth=2, label="Accuracy ↑")
 ax.plot(thresholds, sw_ret, "s--", color="#ff9800", linewidth=2, label="Retrieval Rate ↓")
-ax.axvline(0.1, color="#2196f3", linestyle=":", alpha=0.4, label="Best accuracy (0.1)")
+ax.axvline(0.1, color="#2196f3", linestyle=":", alpha=0.4, label="Best accuracy threshold (0.1)")
 ax.set_xlabel("Uncertainty Threshold"); ax.set_ylabel("Score")
 ax.set_title("Threshold Sweep — Reliability vs Cost Trade-off")
 ax.set_ylim(0, 1); ax.legend(); ax.grid(alpha=0.2)
@@ -223,7 +223,7 @@ save("ragas_results")
 
 
 # ── 11. DeepEval GEval Correctness ───────────────────────────────────────────
-geval = [0.243, 0.199, 0.210, 0.232, 0.240]
+geval = [0.243, 0.199, 0.210, 0.232, 0.240]  # from DeepEval run (unchanged)
 fig, ax = plt.subplots(figsize=(9, 5))
 bars = ax.bar(SYS, geval, color=SCOLS, alpha=0.85)
 ax.set_ylim(0, 0.4); ax.set_ylabel("GEval Correctness Score")
